@@ -7,6 +7,8 @@ dependencies = [
   "starlette>=0.40",
   "uvicorn>=0.30",
   "pyyaml>=6",
+  "psycopg[binary]>=3.2,<4",  # Postgres driver (sync: the ports are sync)
+  "psycopg-pool>=3.2,<4",
 ]
 
 [dependency-groups]
@@ -38,4 +40,4 @@ layers = ["adapters", "application", "ports", "domain"]
 name = "Domain is pure: no frameworks, no I/O"
 type = "forbidden"
 source_modules = ["platform_api.access.domain"]
-forbidden_modules = ["starlette", "uvicorn", "yaml"]
+forbidden_modules = ["starlette", "uvicorn", "yaml", "psycopg", "psycopg_pool"]

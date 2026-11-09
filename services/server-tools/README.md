@@ -50,4 +50,6 @@ uv run lint-imports  # architecture rules (layers, module boundaries, pure domai
 | `SUPERAI_PLATFORM_URL` | e.g. `http://platform-api:8000` |
 | `SUPERAI_SERVICE_TOKEN` | shared secret with platform-api (Vault) |
 | `SUPERAI_SSH_KEY`, `SUPERAI_KNOWN_HOSTS` | private key of the `deploy` user, pinned host keys |
-| `SUPERAI_SERVERS_FILE`, `SUPERAI_ACCESS_LOG`, `SUPERAI_AUDIT_FILE`, `SUPERAI_REGISTRY` | optional |
+| `SUPERAI_DATABASE_URL` | Postgres (required in prod). Servers, access changes and the audit log live there |
+| `SUPERAI_SERVERS_FILE` | YAML that seeds an empty database (default `config/servers.yaml`) |
+| `SUPERAI_ACCESS_LOG`, `SUPERAI_AUDIT_FILE`, `SUPERAI_REGISTRY` | optional; the two files are used only without a database |

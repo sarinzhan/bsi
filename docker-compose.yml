@@ -1,0 +1,26 @@
+# Local development infrastructure. Start:  docker compose up -d postgres
+# Each service has its OWN database and login (no shared tables between services):
+#   server-tools  -> postgresql://server_tools:dev-server-tools@localhost:5432/server_tools
+#   platform-api  -> postgresql://platform:dev-platform@localhost:5432/platform
+# The passwords are for local development only. Stage and prod take them from Vault.
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: superai_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-dev-admin}
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:5432:5432"   # only this machine, never the network
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro   # runs once, on an empty volume
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superai_admin -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

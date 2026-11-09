@@ -46,8 +46,8 @@ Rules (checked by `lint-imports` in CI, see `[tool.importlinter]` in each pyproj
 
 | module | provided | required |
 |---|---|---|
-| **servers**: which machines exist, env, systems, the tools the agent may use on each | `ServerCatalog` (read), `ServerSettings.change_allowed_tools / access_history` (write) | `ServerRepository` (YAML file), `AccessChangeLog` (JSONL), `KnownTools` (wired in `known_tools.py` from the tools catalog) |
-| **tools**: the 11 server tools, argument rules, fixed commands, masking | `CallTool`, `ListTools` | `Targets` (over `ServerCatalog`), `Approvals` (platform-api), `Executor` (SSH), `AuditLog` (JSONL), `RunAuthority` (platform-api) |
+| **servers**: which machines exist, env, systems, the tools the agent may use on each | `ServerCatalog` (read), `ServerSettings.change_allowed_tools / access_history` (write) | `ServerRepository`, `AccessChangeLog` (Postgres; YAML/JSONL without a database), `KnownTools` (wired in `known_tools.py` from the tools catalog) |
+| **tools**: the 11 server tools, argument rules, fixed commands, masking | `CallTool`, `ListTools` | `Targets` (over `ServerCatalog`), `Approvals` (platform-api), `Executor` (SSH), `AuditLog` (Postgres, append-only; JSONL without a database), `RunAuthority` (platform-api) |
 
 Use case `CallTool`: validate → ask the developer → run over SSH → mask + cap → audit → answer.
 No answer in 5 minutes, or platform-api unreachable → **denied** (never allowed by default).
@@ -59,7 +59,7 @@ and `GET /api/tools` for the web app.
 
 | module | owns | provided | required |
 |---|---|---|---|
-| **access** (done) | users, roles (developer, devops, admin), permissions — see `docs/roles.md` | `AccessCheck.can / can_approve_tool / who_can`, `UserAdmin` (Users page) | `UserRepository` (users.yaml; SSO later), `RoleChangeLog` |
+| **access** (done) | users, roles (developer, devops, admin), permissions — see `docs/roles.md` | `AccessCheck.can / can_approve_tool / who_can`, `UserAdmin` (Users page) | `UserRepository` (Postgres; users.yaml without a database; SSO later), `RoleChangeLog` (Postgres, append-only) |
 | **chat** | chats, messages, the event stream | `SendMessage`, `GetChat`, `ListChats`, `ChatEvents` (subscribe) | `ChatRepository`, `AgentRuns` (agent.provided) |
 | **agent** | runs: one per message, run tokens, the sandbox | `StartRun`, `ResolveRunToken` | `Sandbox` (docker run of agent-runner), `ChatEventSink` (chat.provided) |
 | **approval** | pending approvals, "allow for this chat" grants | `RequestApproval` (blocks), `AnswerApproval` | `ApprovalRepository`, `ChatEventSink` (shows the card) |
@@ -71,6 +71,14 @@ The **approval** module asks `access.can_approve_tool(user, kind)` before accept
 developer/devops/admin, writes and any command by devops/admin only. It also decides "once per server per chat" for read tools: when a grant exists,
 it answers immediately and still shows a small "auto-approved" line in the chat.
 `server-tools` always asks, so the rule lives in one place.
+
+## Data
+
+Each service has its **own** Postgres database and login (`server_tools`, `platform`); neither can read the
+other's. Inside a service, each module owns its tables. Schema changes are plain SQL files in
+`src/<package>/migrations/NNNN_title.sql`, applied in order on start (never edit an applied file).
+History tables (`access_changes`, `audit_log`, `role_changes`) are append-only: a trigger rejects
+UPDATE, DELETE and TRUNCATE. `config/*.yaml` seeds an empty database once.
 
 ## Contracts between the services
 
