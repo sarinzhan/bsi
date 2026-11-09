@@ -16,6 +16,7 @@ src/server_tools/
 uv sync
 uv run uvicorn server_tools.main:app --port 8100
 curl localhost:8100/api/tools
+open http://localhost:8100/docs   # API docs (FastAPI)
 ```
 
 MCP endpoint: `http://localhost:8100/mcp/`, header `Authorization: Bearer dev-superapp-dev`

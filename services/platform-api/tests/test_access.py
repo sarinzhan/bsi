@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 import yaml
-from starlette.applications import Starlette
-from starlette.testclient import TestClient
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from platform_api.access import create_access_module
-from platform_api.access.adapters.http_api import access_routes
+from platform_api.access.adapters.http_api import access_router
 from platform_api.access.domain.roles import ROLE_PERMISSIONS, Permission, Role
 from platform_api.access.ports.provided import NotAllowed, RoleChangeRejected
 
@@ -72,7 +72,8 @@ def test_rules_no_roles_unknown_role_last_admin_reason(access):
 
 def test_http(access):
     module, _ = access
-    app = Starlette(routes=access_routes(module.admin, lambda r: r.headers.get("x-user-id")))
+    app = FastAPI()
+    app.include_router(access_router(module.admin, lambda r: r.headers.get("x-user-id")))
     c = TestClient(app)
     assert c.get("/api/me").status_code == 401
     assert c.get("/api/me", headers={"X-User-Id": "timur"}).json()["roles"] == ["developer", "devops"]

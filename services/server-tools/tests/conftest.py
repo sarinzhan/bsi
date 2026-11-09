@@ -10,29 +10,32 @@ Without the variable, Postgres tests are skipped.
 import os
 import uuid
 
-import psycopg
 import pytest
-from psycopg.conninfo import make_conninfo
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
-from server_tools.db import migrate, open_pool
+from server_tools.db import make_engine, migrate, sqlalchemy_url
 
 TEST_DATABASE_URL = os.environ.get("SUPERAI_TEST_DATABASE_URL")
 
 
 @pytest.fixture
 def pg():
-    """(pool, conninfo) bound to a fresh schema with all migrations applied."""
+    """(engine, url) bound to a fresh schema, migrated to the newest Alembic revision."""
     if not TEST_DATABASE_URL:
         pytest.skip("set SUPERAI_TEST_DATABASE_URL to run the Postgres tests")
     schema = f"test_{uuid.uuid4().hex[:12]}"
-    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
-        conn.execute(f"CREATE SCHEMA {schema}")
-    conninfo = make_conninfo(TEST_DATABASE_URL, options=f"-c search_path={schema}")
-    migrate(conninfo)
-    pool = open_pool(conninfo)
+    admin = create_engine(sqlalchemy_url(TEST_DATABASE_URL), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f"CREATE SCHEMA {schema}"))
+    url = make_url(TEST_DATABASE_URL).update_query_dict({"options": f"-c search_path={schema}"})
+    url = url.render_as_string(hide_password=False)
+    migrate(url)
+    engine = make_engine(url)
     try:
-        yield pool, conninfo
+        yield engine, url
     finally:
-        pool.close()
-        with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
-            conn.execute(f"DROP SCHEMA {schema} CASCADE")
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+        admin.dispose()

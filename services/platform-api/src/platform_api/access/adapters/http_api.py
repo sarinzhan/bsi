@@ -1,4 +1,4 @@
-"""Inbound adapter: access HTTP API for the web app.
+"""Inbound adapter: access HTTP API for the web app (FastAPI).
 
   GET /api/me                        current user, roles, permissions
   GET /api/users                     all users (any signed-in user)
@@ -12,66 +12,60 @@ read the SSO session. Nothing here decides permissions: the use cases do.
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Callable
 
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
-from platform_api.access.ports.provided import NotAllowed, RoleChangeRejected, UserAdmin, UserNotFound
+from platform_api.access.ports.provided import (
+    NotAllowed, RoleChange, RoleChangeRejected, UserAdmin, UserNotFound, UserView,
+)
 
 
-def access_routes(admin: UserAdmin, current_user: Callable[[Request], str | None]) -> list[Route]:
-    def signed_in(request: Request) -> str | JSONResponse:
+class SetRolesBody(BaseModel):
+    roles: list[str]
+    reason: str = ""
+
+
+def access_router(admin: UserAdmin, current_user: Callable[[Request], str | None]) -> APIRouter:
+    router = APIRouter(prefix="/api", tags=["access"])
+
+    def signed_in(request: Request) -> str:
+        """FastAPI dependency: the id of a known, signed-in user, or 401."""
         uid = current_user(request)
         if not uid:
-            return JSONResponse({"error": "not signed in"}, status_code=401)
+            raise HTTPException(401, "not signed in")
         try:
             admin.me(uid)
         except UserNotFound:
-            return JSONResponse({"error": "unknown user"}, status_code=401)
+            raise HTTPException(401, "unknown user") from None
         return uid
 
-    async def me(request: Request) -> JSONResponse:
-        uid = signed_in(request)
-        return uid if isinstance(uid, JSONResponse) else JSONResponse(asdict(admin.me(uid)))
+    @router.get("/me")
+    def me(uid: str = Depends(signed_in)) -> UserView:
+        return admin.me(uid)
 
-    async def users(request: Request) -> JSONResponse:
-        uid = signed_in(request)
-        return uid if isinstance(uid, JSONResponse) else JSONResponse([asdict(u) for u in admin.list_users()])
+    @router.get("/users", dependencies=[Depends(signed_in)])
+    def users() -> list[UserView]:
+        return admin.list_users()
 
-    async def set_roles(request: Request) -> JSONResponse:
-        uid = signed_in(request)
-        if isinstance(uid, JSONResponse):
-            return uid
-        body = await request.json()
-        roles = body.get("roles")
-        if not isinstance(roles, list):
-            return JSONResponse({"error": "roles must be a list"}, status_code=422)
+    @router.put("/users/{user_id}/roles")
+    def set_roles(user_id: str, body: SetRolesBody, uid: str = Depends(signed_in)) -> UserView:
         try:
-            view = admin.set_roles(uid, request.path_params["id"], [str(r) for r in roles], str(body.get("reason", "")))
+            return admin.set_roles(uid, user_id, body.roles, body.reason)
         except NotAllowed as e:
-            return JSONResponse({"error": str(e)}, status_code=403)
+            raise HTTPException(403, str(e)) from None
         except UserNotFound:
-            return JSONResponse({"error": "user not found"}, status_code=404)
+            raise HTTPException(404, "user not found") from None
         except RoleChangeRejected as e:
-            return JSONResponse({"error": str(e)}, status_code=422)
-        return JSONResponse(asdict(view))
+            raise HTTPException(422, str(e)) from None
 
-    async def history(request: Request) -> JSONResponse:
-        uid = signed_in(request)
-        if isinstance(uid, JSONResponse):
-            return uid
-        return JSONResponse([asdict(c) for c in admin.role_history(request.path_params["id"])])
+    @router.get("/users/{user_id}/role-history", dependencies=[Depends(signed_in)])
+    def role_history(user_id: str) -> list[RoleChange]:
+        return admin.role_history(user_id)
 
-    async def roles(_: Request) -> JSONResponse:
-        return JSONResponse(admin.matrix())
+    @router.get("/roles")
+    def roles() -> dict[str, list[str]]:
+        return admin.matrix()
 
-    return [
-        Route("/api/me", me),
-        Route("/api/users", users),
-        Route("/api/users/{id}/roles", set_roles, methods=["PUT"]),
-        Route("/api/users/{id}/role-history", history),
-        Route("/api/roles", roles),
-    ]
+    return router

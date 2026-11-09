@@ -22,9 +22,15 @@ to servers that humans provide.
 | server-tools | `postgresql://server_tools:dev-server-tools@localhost:5432/server_tools` |
 | platform-api | `postgresql://platform:dev-platform@localhost:5432/platform` |
 
-With the variable set, a service applies its migrations (`src/<package>/migrations/*.sql`) on start and,
-if the database is empty, imports `config/*.yaml` once. Without it, the service uses the YAML and JSONL
+With the variable set, a service runs `alembic upgrade head` on start and, if the database is empty,
+imports `config/*.yaml` once. Without it, the service uses the YAML and JSONL
 files as before (handy for quick runs). In prod the variable is required.
+
+Stack: **FastAPI** (API docs at `/docs`), **SQLAlchemy 2** ORM, **Alembic** migrations. After changing
+an ORM model (in a module's `adapters/`), from the service folder:
+
+    uv run alembic revision --autogenerate -m "what changed"   # read and fix the generated file
+    uv run alembic check                                       # models and migrations match?
 
 Postgres tests run when `SUPERAI_TEST_DATABASE_URL` is set (see `tests/conftest.py` in each service),
 otherwise they are skipped.

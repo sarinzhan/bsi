@@ -14,7 +14,7 @@ from platform_api.access.ports.provided import AccessCheck, UserAdmin
 from platform_api.access.ports.required import RoleChangeLog, UserRepository
 
 if TYPE_CHECKING:
-    from psycopg_pool import ConnectionPool
+    from sqlalchemy import Engine
 
 
 @dataclass(frozen=True)
@@ -23,18 +23,18 @@ class AccessModule:
     admin: UserAdmin  # for the Users page
 
 
-def create_access_module(users_file: Path, role_log: Path, pool: "ConnectionPool | None" = None) -> AccessModule:
-    """pool given: users and role changes live in Postgres; users_file seeds an empty database.
-    No pool: users.yaml is the store and role changes go to a JSONL file (tests, quick local runs).
+def create_access_module(users_file: Path, role_log: Path, engine: "Engine | None" = None) -> AccessModule:
+    """engine given: users and role changes live in Postgres; users_file seeds an empty database.
+    No engine: users.yaml is the store and role changes go to a JSONL file (tests, quick local runs).
     """
     users: UserRepository
     log: RoleChangeLog
-    if pool is None:
+    if engine is None:
         users, log = YamlUserRepository(users_file), JsonlRoleChangeLog(role_log)
     else:
         from platform_api.access.adapters.postgres import PostgresRoleChangeLog, PostgresUserRepository
 
-        users, log = PostgresUserRepository(pool), PostgresRoleChangeLog(pool)
+        users, log = PostgresUserRepository(engine), PostgresRoleChangeLog(engine)
         if users.is_empty() and users_file.exists():
             _seed(users, log, YamlUserRepository(users_file), users_file.name)
     service = AccessService(users, log)

@@ -1,67 +1,100 @@
-"""Servers and access changes in Postgres (the server_tools database)."""
+"""Outbound adapter: servers and access changes in Postgres, with SQLAlchemy.
+
+The ORM models (ServerRow, AccessChangeRow) are a storage detail of this adapter. The rest of the module
+only sees the domain classes (Server, AccessChanged): the repositories convert between the two.
+"""
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 
-from psycopg_pool import ConnectionPool
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Engine, ForeignKey, Identity, Index, Integer, Text, func, select
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from server_tools.db import Base
 from server_tools.servers.domain.server import AccessChanged, Env, Server
 from server_tools.servers.ports.required import AccessChangeLog, ServerRepository
 
-_COLUMNS = "name, host, env, systems, allowed_tools, ssh_user, ssh_port"
+
+class ServerRow(Base):
+    __tablename__ = "servers"
+    __table_args__ = (
+        CheckConstraint("name ~ '^[a-z0-9][a-z0-9-]{1,62}$'", name="name_format"),
+        CheckConstraint("env IN ('dev', 'stage', 'prod')", name="env_known"),
+        CheckConstraint("ssh_port BETWEEN 1 AND 65535", name="ssh_port_range"),
+        # the same rule as the domain, so a hand-written UPDATE cannot break it either
+        CheckConstraint("NOT (env = 'prod' AND 'ssh_exec' = ANY (allowed_tools))", name="no_ssh_exec_on_prod"),
+    )
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    host: Mapped[str] = mapped_column(Text)
+    env: Mapped[str] = mapped_column(Text)
+    systems: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")  # systems allowed here
+    allowed_tools: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")  # empty = nothing
+    ssh_user: Mapped[str] = mapped_column(Text, server_default="deploy")
+    ssh_port: Mapped[int] = mapped_column(Integer, server_default="22")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
+                                                 onupdate=func.now())
+
+
+class AccessChangeRow(Base):
+    """Append-only (a trigger rejects UPDATE, DELETE and TRUNCATE, see the migration)."""
+
+    __tablename__ = "access_changes"
+    __table_args__ = (Index(None, "server", "id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    server: Mapped[str] = mapped_column(Text, ForeignKey("servers.name"))
+    added: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    removed: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    by: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+def _to_server(row: ServerRow) -> Server:
+    return Server(name=row.name, host=row.host, env=Env(row.env), systems=frozenset(row.systems),
+                  allowed_tools=frozenset(row.allowed_tools), ssh_user=row.ssh_user, ssh_port=row.ssh_port)
+
+
+def _iso(at: datetime) -> str:
+    return at.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 class PostgresServerRepository(ServerRepository):
-    def __init__(self, pool: ConnectionPool) -> None:
-        self._pool = pool
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def all(self) -> list[Server]:
-        with self._pool.connection() as conn:
-            rows = conn.execute(f"SELECT {_COLUMNS} FROM servers ORDER BY name").fetchall()
-        return [
-            Server(name=r[0], host=r[1], env=Env(r[2]), systems=frozenset(r[3]), allowed_tools=frozenset(r[4]),
-                   ssh_user=r[5], ssh_port=r[6])
-            for r in rows
-        ]
+        with Session(self._engine) as session:
+            return [_to_server(r) for r in session.scalars(select(ServerRow).order_by(ServerRow.name))]
 
     def save(self, server: Server) -> None:
-        with self._pool.connection() as conn:
-            conn.execute(
-                f"INSERT INTO servers ({_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (name) DO UPDATE SET host = EXCLUDED.host, env = EXCLUDED.env, "
-                "systems = EXCLUDED.systems, allowed_tools = EXCLUDED.allowed_tools, "
-                "ssh_user = EXCLUDED.ssh_user, ssh_port = EXCLUDED.ssh_port, updated_at = now()",
-                (server.name, server.host, server.env.value, sorted(server.systems), sorted(server.allowed_tools),
-                 server.ssh_user, server.ssh_port),
-            )
+        with Session(self._engine) as session, session.begin():
+            session.merge(ServerRow(
+                name=server.name, host=server.host, env=server.env.value, systems=sorted(server.systems),
+                allowed_tools=sorted(server.allowed_tools), ssh_user=server.ssh_user, ssh_port=server.ssh_port,
+            ))
 
     def is_empty(self) -> bool:
-        with self._pool.connection() as conn:
-            return conn.execute("SELECT NOT EXISTS (SELECT 1 FROM servers)").fetchone()[0]
+        with Session(self._engine) as session:
+            return session.scalar(select(ServerRow.name).limit(1)) is None
 
 
 class PostgresAccessChangeLog(AccessChangeLog):
-    def __init__(self, pool: ConnectionPool) -> None:
-        self._pool = pool
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def append(self, event: AccessChanged) -> None:
-        with self._pool.connection() as conn:
-            conn.execute(
-                "INSERT INTO access_changes (server, added, removed, by, reason, at) "
-                "VALUES (%s, %s, %s, %s, %s, %s::timestamptz)",
-                (event.server, list(event.added), list(event.removed), event.by, event.reason, event.at),
-            )
+        with Session(self._engine) as session, session.begin():
+            session.add(AccessChangeRow(server=event.server, added=list(event.added), removed=list(event.removed),
+                                        by=event.by, reason=event.reason, at=datetime.fromisoformat(event.at)))
 
     def for_server(self, name: str) -> list[AccessChanged]:
         """Oldest first, like the JSONL log."""
-        with self._pool.connection() as conn:
-            rows = conn.execute(
-                "SELECT server, added, removed, by, reason, at FROM access_changes WHERE server = %s ORDER BY id",
-                (name,),
-            ).fetchall()
-        return [
-            AccessChanged(r[0], tuple(r[1]), tuple(r[2]), r[3], r[4],
-                          r[5].astimezone(timezone.utc).isoformat(timespec="seconds"))
-            for r in rows
-        ]
+        with Session(self._engine) as session:
+            rows = session.scalars(select(AccessChangeRow).where(AccessChangeRow.server == name)
+                                   .order_by(AccessChangeRow.id))
+            return [AccessChanged(r.server, tuple(r.added), tuple(r.removed), r.by, r.reason, _iso(r.at))
+                    for r in rows]

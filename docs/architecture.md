@@ -39,6 +39,8 @@ already talks only through ports.
 Rules (checked by `lint-imports` in CI, see `[tool.importlinter]` in each pyproject):
 1. Layers: `adapters → application → ports → domain`, never upwards.
 2. Domain imports no frameworks (mcp, starlette, fastapi, asyncssh, httpx, yaml, sqlalchemy).
+   Application and ports import no web framework and no database library either: FastAPI routes are
+   inbound adapters, SQLAlchemy repositories are outbound adapters.
 3. Module A sees module B only through `B.ports.provided`. No shared tables, no shared domain classes.
 4. Wiring happens in one place per service: `main.py` (composition root). No DI framework.
 
@@ -75,8 +77,9 @@ it answers immediately and still shows a small "auto-approved" line in the chat.
 ## Data
 
 Each service has its **own** Postgres database and login (`server_tools`, `platform`); neither can read the
-other's. Inside a service, each module owns its tables. Schema changes are plain SQL files in
-`src/<package>/migrations/NNNN_title.sql`, applied in order on start (never edit an applied file).
+other's. Inside a service, each module owns its tables: its SQLAlchemy ORM models live in the module's
+outbound adapters and never leave them (repositories convert rows to domain objects). Schema changes are
+Alembic migrations in `src/<package>/migrations/versions/`, applied on start (`alembic upgrade head`).
 History tables (`access_changes`, `audit_log`, `role_changes`) are append-only: a trigger rejects
 UPDATE, DELETE and TRUNCATE. `config/*.yaml` seeds an empty database once.
 

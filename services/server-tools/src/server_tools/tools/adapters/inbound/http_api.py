@@ -1,21 +1,21 @@
-"""Inbound adapter: small read-only HTTP API for the web app (Servers page)."""
+"""Inbound adapter: small read-only HTTP API for the web app (Servers page), FastAPI."""
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from fastapi import APIRouter
 
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
-
-from server_tools.tools.ports.provided import ListTools
+from server_tools.tools.ports.provided import ListTools, ToolInfo
 
 
-def http_routes(list_tools: ListTools) -> list[Route]:
-    async def tools(_: Request) -> JSONResponse:
-        return JSONResponse([asdict(t) for t in list_tools()])
+def tools_router(list_tools: ListTools) -> APIRouter:
+    router = APIRouter(tags=["tools"])
 
-    async def health(_: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok"})
+    @router.get("/api/tools")
+    def tools() -> list[ToolInfo]:
+        return list_tools()
 
-    return [Route("/api/tools", tools), Route("/health", health)]
+    @router.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return router

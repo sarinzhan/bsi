@@ -16,7 +16,7 @@ from server_tools.servers.ports.provided import ServerCatalog, ServerSettings
 from server_tools.servers.ports.required import AccessChangeLog, KnownTools, ServerRepository
 
 if TYPE_CHECKING:
-    from psycopg_pool import ConnectionPool
+    from sqlalchemy import Engine
 
 
 @dataclass(frozen=True)
@@ -26,20 +26,20 @@ class ServersModule:
 
 
 def create_servers_module(config_path: Path, access_log_path: Path, known_tools: KnownTools,
-                          pool: "ConnectionPool | None" = None) -> ServersModule:
+                          engine: "Engine | None" = None) -> ServersModule:
     """Wires the module and returns only its provided ports.
 
-    pool given: servers and access changes live in Postgres; config_path seeds an empty database.
-    No pool: servers.yaml is the store and access changes go to a JSONL file (tests, quick local runs).
+    engine given: servers and access changes live in Postgres; config_path seeds an empty database.
+    No engine: servers.yaml is the store and access changes go to a JSONL file (tests, quick local runs).
     """
     repository: ServerRepository
     log: AccessChangeLog
-    if pool is None:
+    if engine is None:
         repository, log = YamlServerRepository(config_path), JsonlAccessChangeLog(access_log_path)
     else:
         from server_tools.servers.adapters.postgres import PostgresAccessChangeLog, PostgresServerRepository
 
-        repository, log = PostgresServerRepository(pool), PostgresAccessChangeLog(pool)
+        repository, log = PostgresServerRepository(engine), PostgresAccessChangeLog(engine)
         if repository.is_empty() and config_path.exists():
             _seed(repository, log, YamlServerRepository(config_path), config_path.name)
     return ServersModule(ServerCatalogService(repository), ServerSettingsService(repository, log, known_tools))

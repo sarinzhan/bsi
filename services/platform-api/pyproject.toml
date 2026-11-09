@@ -4,11 +4,12 @@ version = "0.1.0"
 description = "superAI platform API: a modular monolith (access, chat, agent, approval, project, history, skills)."
 requires-python = ">=3.11"
 dependencies = [
-  "starlette>=0.40",
+  "fastapi>=0.115,<1",
   "uvicorn>=0.30",
   "pyyaml>=6",
-  "psycopg[binary]>=3.2,<4",  # Postgres driver (sync: the ports are sync)
-  "psycopg-pool>=3.2,<4",
+  "sqlalchemy>=2.0.36,<3",     # ORM (sync: the ports are sync)
+  "alembic>=1.14,<2",          # migrations
+  "psycopg[binary]>=3.2,<4",  # Postgres driver used by SQLAlchemy
 ]
 
 [dependency-groups]
@@ -40,4 +41,10 @@ layers = ["adapters", "application", "ports", "domain"]
 name = "Domain is pure: no frameworks, no I/O"
 type = "forbidden"
 source_modules = ["platform_api.access.domain"]
-forbidden_modules = ["starlette", "uvicorn", "yaml", "psycopg", "psycopg_pool"]
+forbidden_modules = ["starlette", "fastapi", "pydantic", "uvicorn", "yaml", "sqlalchemy", "alembic", "psycopg"]
+
+[[tool.importlinter.contracts]]
+name = "Use cases and ports know no web framework and no database library (those belong in adapters)"
+type = "forbidden"
+source_modules = ["platform_api.access.application", "platform_api.access.ports"]
+forbidden_modules = ["fastapi", "starlette", "pydantic", "sqlalchemy", "alembic", "psycopg", "yaml"]

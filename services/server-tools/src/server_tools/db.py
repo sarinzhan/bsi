@@ -1,45 +1,51 @@
-"""Postgres plumbing for the composition root: the connection pool and the schema migrations.
+"""Database plumbing for the composition root: SQLAlchemy engine, ORM base class, Alembic migrations.
 
-Migrations are plain SQL files in `migrations/` (NNNN_title.sql), applied in order, each in one
-transaction, and recorded in `schema_migrations`. Never edit an applied file: add a new one.
+Each module declares its own ORM models (in its adapters) on `Base`; Alembic sees all of them.
+Migrations live in `migrations/versions/`. New one after changing a model:
+
+    uv run alembic revision --autogenerate -m "add column x"     # then read and fix the file
+    uv run alembic upgrade head                                  # or just start the service
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import psycopg
-from psycopg_pool import ConnectionPool
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import Engine, MetaData, create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import DeclarativeBase
 
 MIGRATIONS = Path(__file__).with_name("migrations")
-_LOCK = 7_420_001  # pg_advisory_lock key: two replicas starting at once do not migrate twice
 
 
-def migrate(conninfo: str, directory: Path = MIGRATIONS) -> list[str]:
-    """Applies the SQL files that are not applied yet. Returns their names."""
-    applied: list[str] = []
-    with psycopg.connect(conninfo, autocommit=True) as conn:
-        conn.execute("SELECT pg_advisory_lock(%s)", (_LOCK,))
-        try:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS schema_migrations ("
-                " version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
-            )
-            done = {row[0] for row in conn.execute("SELECT version FROM schema_migrations")}
-            for file in sorted(directory.glob("*.sql")):
-                if file.stem in done:
-                    continue
-                with conn.transaction():
-                    conn.execute(file.read_text())
-                    conn.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (file.stem,))
-                applied.append(file.stem)
-        finally:
-            conn.execute("SELECT pg_advisory_unlock(%s)", (_LOCK,))
-    return applied
+class Base(DeclarativeBase):
+    # Stable constraint names, so Alembic can find and change them later.
+    metadata = MetaData(naming_convention={
+        "ix": "ix_%(table_name)s_%(column_0_N_name)s",
+        "uq": "uq_%(table_name)s_%(column_0_N_name)s",
+        "ck": "ck_%(table_name)s_%(constraint_name)s",
+        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+        "pk": "pk_%(table_name)s",
+    })
 
 
-def open_pool(conninfo: str) -> ConnectionPool:
-    """Adapters convert timestamps to UTC themselves, so the session time zone does not matter."""
-    pool = ConnectionPool(conninfo, min_size=1, max_size=10, open=False)
-    pool.open(wait=True, timeout=10)  # fail at startup, not on the first tool call
-    return pool
+def sqlalchemy_url(url: str) -> str:
+    """Accepts a plain postgresql:// URL and selects the psycopg 3 driver."""
+    parsed = make_url(url)
+    if parsed.drivername in ("postgresql", "postgres"):
+        parsed = parsed.set(drivername="postgresql+psycopg")
+    return parsed.render_as_string(hide_password=False)
+
+
+def make_engine(url: str) -> Engine:
+    return create_engine(sqlalchemy_url(url), pool_size=5, max_overflow=5, pool_pre_ping=True)
+
+
+def migrate(url: str) -> None:
+    """Upgrades the database to the newest migration (`alembic upgrade head`)."""
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS))
+    config.attributes["url"] = sqlalchemy_url(url)  # not via set_main_option: '%' in URLs breaks configparser
+    command.upgrade(config, "head")

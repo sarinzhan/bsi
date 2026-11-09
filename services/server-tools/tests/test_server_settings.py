@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 import yaml
-from starlette.applications import Starlette
-from starlette.testclient import TestClient
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from server_tools.known_tools import CatalogToolNames
 from server_tools.servers import create_servers_module
-from server_tools.servers.adapters.http_api import server_routes
+from server_tools.servers.adapters.http_api import servers_router
 from server_tools.servers.ports.provided import AccessChangeRejected
 from server_tools.tools import create_tools_module
 from server_tools.tools.adapters.outbound.fake_executor import FakeExecutor
@@ -85,7 +85,9 @@ async def test_removing_a_tool_while_waiting_for_approval_blocks_the_command(mod
 
 def test_http_needs_service_token_in_prod(module):
     servers, _ = module
-    client = TestClient(Starlette(routes=server_routes(servers.catalog, servers.settings, "s3cret")))
+    app = FastAPI()
+    app.include_router(servers_router(servers.catalog, servers.settings, "s3cret"))
+    client = TestClient(app)
     url = "/api/servers/stage-docker-01/allowed-tools"
     body = {"tools": READ, "reason": "read-only stage"}
     assert client.put(url, json=body).status_code == 401

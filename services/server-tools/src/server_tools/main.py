@@ -9,13 +9,12 @@ import contextlib
 import os
 from pathlib import Path
 
-from starlette.applications import Starlette
-from starlette.routing import Mount
+from fastapi import FastAPI
 
 from server_tools.servers import create_servers_module
-from server_tools.servers.adapters.http_api import server_routes
+from server_tools.servers.adapters.http_api import servers_router
 from server_tools.tools import create_tools_module
-from server_tools.tools.adapters.inbound.http_api import http_routes
+from server_tools.tools.adapters.inbound.http_api import tools_router
 from server_tools.tools.adapters.inbound.mcp_server import create_mcp_server
 from server_tools.tools.adapters.outbound.audit_jsonl import JsonlAuditLog
 from server_tools.tools.adapters.outbound.audit_postgres import PostgresAuditLog
@@ -31,7 +30,7 @@ from server_tools.tools.ports.required import AuditLog
 HERE = Path(__file__).resolve().parents[2]
 
 
-def build_app() -> Starlette:
+def build_app() -> FastAPI:
     env = os.environ.get
     mode = env("SUPERAI_MODE", "dev")  # dev: fake SSH, answers approvals itself; prod: real everything
 
@@ -39,20 +38,20 @@ def build_app() -> Starlette:
     database_url = env("SUPERAI_DATABASE_URL")
     if mode == "prod" and not database_url:
         raise RuntimeError("SUPERAI_DATABASE_URL is required in prod")
-    pool = None
+    engine = None
     if database_url:
-        from server_tools.db import migrate, open_pool
+        from server_tools.db import make_engine, migrate
 
-        migrate(database_url)
-        pool = open_pool(database_url)
+        migrate(database_url)  # alembic upgrade head
+        engine = make_engine(database_url)
 
     servers = create_servers_module(
         Path(env("SUPERAI_SERVERS_FILE", str(HERE / "config/servers.yaml"))),  # seeds an empty database
         Path(env("SUPERAI_ACCESS_LOG", str(HERE / "var/access-changes.jsonl"))),
         CatalogToolNames(),
-        pool,
+        engine,
     )
-    audit: AuditLog = (PostgresAuditLog(pool) if pool is not None
+    audit: AuditLog = (PostgresAuditLog(engine) if engine is not None
                        else JsonlAuditLog(Path(env("SUPERAI_AUDIT_FILE", str(HERE / "var/audit.jsonl")))))
     service_token = env("SUPERAI_SERVICE_TOKEN") if mode == "prod" else None
 
@@ -74,16 +73,19 @@ def build_app() -> Starlette:
     mcp_app = mcp.streamable_http_app(stateless_http=True, json_response=True, streamable_http_path="/")
 
     @contextlib.asynccontextmanager
-    async def lifespan(_: Starlette):
+    async def lifespan(_: FastAPI):
         try:
             async with mcp.session_manager.run():
                 yield
         finally:
-            if pool is not None:
-                pool.close()
+            if engine is not None:
+                engine.dispose()
 
-    routes = [*http_routes(tools.list_tools), *server_routes(servers.catalog, servers.settings, service_token)]
-    return Starlette(routes=[*routes, Mount("/mcp", app=mcp_app)], lifespan=lifespan)
+    app = FastAPI(title="superAI server-tools", lifespan=lifespan)  # API docs: /docs
+    app.include_router(tools_router(tools.list_tools))
+    app.include_router(servers_router(servers.catalog, servers.settings, service_token))
+    app.mount("/mcp", mcp_app)
+    return app
 
 
 app = build_app()
