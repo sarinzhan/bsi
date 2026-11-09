@@ -1,0 +1,15 @@
+# Platform users and their roles. Admins change roles on the Users page; this file is written back.
+# roles: developer, devops, admin (a user may have several; admin includes developer + devops).
+users:
+  sarinzha:
+    name: Sarinzha K.
+    roles: [developer]
+  aibek:
+    name: Aibek T.
+    roles: [devops]
+  timur:
+    name: Timur S.
+    roles: [developer, devops]
+  dana:
+    name: Dana M.
+    roles: [admin]

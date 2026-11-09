@@ -1,0 +1,21 @@
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.import_linter_cache/
+var/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+vite.config.ts.timestamp-*
+
+# Local secrets
+.env
+!*.env.example

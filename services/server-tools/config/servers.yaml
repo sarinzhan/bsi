@@ -1,0 +1,31 @@
+# Servers the platform may use. DevOps and admins change allowed_tools in the server settings page.
+# allowed_tools: the tools the agent may call on this server (empty or missing = nothing).
+#   read:  folder_list, file_read, docker_ps, docker_logs, docker_inspect, docker_stats
+#   write: file_write, docker_run, compose_run, compose_restart
+#   full:  ssh_exec (any command) - refused on prod
+servers:
+  dev-docker-01:
+    host: 10.20.1.11
+    env: dev
+    systems: [superapp]
+    allowed_tools: [compose_restart, compose_run, docker_inspect, docker_logs, docker_ps, docker_run, docker_stats,
+      file_read, file_write, folder_list]
+
+  dev-docker-02:
+    host: 10.20.1.12
+    env: dev
+    systems: [tiffany]
+    allowed_tools: [compose_restart, compose_run, docker_inspect, docker_logs, docker_ps, docker_run, docker_stats,
+      file_read, file_write, folder_list, ssh_exec]
+
+  stage-docker-01:
+    host: 10.25.1.21
+    env: stage
+    systems: [superapp]
+    allowed_tools: [compose_restart, docker_inspect, docker_logs, docker_ps, docker_stats, file_read, folder_list]
+
+  prod-docker-01:
+    host: 10.30.1.31
+    env: prod
+    systems: [superapp]
+    allowed_tools: [docker_logs, docker_ps, docker_stats]
