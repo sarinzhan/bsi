@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from mcp.server.transport_security import TransportSecuritySettings
 
 from server_tools.servers import create_servers_module
 from server_tools.servers.adapters.http_api import servers_router
@@ -63,14 +64,23 @@ def build_app() -> FastAPI:
     else:
         executor = FakeExecutor()
         approvals = AnswerAllApprovals(allow=env("SUPERAI_DEV_APPROVE", "allow") == "allow")
-        authority = StaticRunAuthority()
+        # With SUPERAI_PLATFORM_URL, run tokens come from a local platform-api (real agent containers);
+        # without it, fixed dev tokens "dev-<system>-<env>" work.
+        platform_url = env("SUPERAI_PLATFORM_URL")
+        authority = PlatformRunAuthority(platform_url, env("SUPERAI_SERVICE_TOKEN", "")) if platform_url \
+            else StaticRunAuthority()
 
     tools = create_tools_module(
         ServerCatalogTargets(servers.catalog), approvals, executor, audit,
         ImagePolicy(registry=env("SUPERAI_REGISTRY", "registry")),
     )
     mcp = create_mcp_server(tools.call_tool, authority)
-    mcp_app = mcp.streamable_http_app(stateless_http=True, json_response=True, streamable_http_path="/")
+    # DNS rebinding protection stays on: only these Host headers are accepted. Agent containers call
+    # http://server-tools:8100/mcp/, so that name must be in the list.
+    hosts = env("SUPERAI_MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*,server-tools:*").split(",")
+    security = TransportSecuritySettings(allowed_hosts=[h.strip() for h in hosts if h.strip()])
+    mcp_app = mcp.streamable_http_app(stateless_http=True, json_response=True, streamable_http_path="/",
+                                      transport_security=security)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI):

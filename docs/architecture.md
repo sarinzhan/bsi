@@ -10,7 +10,7 @@ hexagonal and talks to other modules only through ports.
 ┌──────────────────────────── platform-api (modular monolith) ───────────────────────────┐
 │  chat      agent      approval      project      history      skills                    │
 └─────────────┬──────────────▲───────────────────────────────────────────────────────────┘
-              │ starts runs  │ POST /internal/approvals, GET /internal/runs/{token}
+              │ starts runs  │ POST /internal/approvals, POST /internal/runs/resolve
               ▼              │
    agent sandbox ── MCP ──► server-tools (separate service, holds the SSH key)
    (claude -p)               servers      tools      ──SSH──►  Docker servers
@@ -57,13 +57,13 @@ No answer in 5 minutes, or platform-api unreachable → **denied** (never allowe
 Inbound: MCP at `/mcp` (streamable HTTP; the agent sends `Authorization: Bearer <run token>`),
 and `GET /api/tools` for the web app.
 
-## platform-api (started: access module)
+## platform-api (done: access, agent)
 
 | module | owns | provided | required |
 |---|---|---|---|
 | **access** (done) | users, roles (developer, devops, admin), permissions — see `docs/roles.md` | `AccessCheck.can / can_approve_tool / who_can`, `UserAdmin` (Users page) | `UserRepository` (Postgres; users.yaml without a database; SSO later), `RoleChangeLog` (Postgres, append-only) |
 | **chat** | chats, messages, the event stream | `SendMessage`, `GetChat`, `ListChats`, `ChatEvents` (subscribe) | `ChatRepository`, `AgentRuns` (agent.provided) |
-| **agent** | runs: one per message, run tokens, the sandbox | `StartRun`, `ResolveRunToken` | `Sandbox` (docker run of agent-runner), `ChatEventSink` (chat.provided) |
+| **agent** (done; events to chat: later) | runs (one container each), run tokens (hash only), deadlines | `Runs.start / cancel / get`, `RunTokens.resolve / finish`, `RunReaper` | `RunRepository` (Postgres; memory without a database), `Sandbox` (Docker; fake in dev), `AccessCheck` (access.provided), `ChatEventSink` (chat.provided, later) |
 | **approval** | pending approvals, "allow for this chat" grants | `RequestApproval` (blocks), `AnswerApproval` | `ApprovalRepository`, `ChatEventSink` (shows the card) |
 | **project** | projects, repos, files the agent changed | `LinkProject`, `GetProject`, `ListProjects` | `ProjectRepository`, `GitLab` |
 | **history** | decision log (ADRs), versions | `RecordDecision`, `ListDecisions` | `AdrStore` (git: `platform/docs/adr/`) |
@@ -73,6 +73,26 @@ The **approval** module asks `access.can_approve_tool(user, kind)` before accept
 developer/devops/admin, writes and any command by devops/admin only. It also decides "once per server per chat" for read tools: when a grant exists,
 it answers immediately and still shows a small "auto-approved" line in the chat.
 `server-tools` always asks, so the rule lives in one place.
+
+### Agent runs and their containers
+
+```
+message ─► agent.start(user, chat, system, env)
+             ├─ access.can(user, "chat.use")?
+             ├─ new run + random token; Postgres keeps sha256(token) only; deadline = now + 30 min
+             └─ Sandbox.start: container superai-<run id>, env SUPERAI_RUN_TOKEN, SUPERAI_MCP_URL, ...
+container ─MCP, Bearer <token>─► server-tools ─POST /internal/runs/resolve─► platform-api
+             → {runId, chatId, system, env, requestedBy}: the token decides system and env, not the agent
+container ─POST /runner/finish (Bearer <token>)─► run ends, token dies, container stopped
+every 60 s: reaper stops containers past their deadline (the token is already dead at the deadline)
+```
+
+The container is untrusted (later it runs code the agent wrote), so it holds nothing valuable: only the token.
+`DockerSandbox` runs it as a non-root user, read-only root filesystem, no capabilities, no new privileges,
+CPU/memory/process limits, removed on exit, no Docker socket, no host folders, on the network
+`superai-agent-sandbox`. Create that network with `internal: true` (no internet) and attach only
+server-tools and platform-api to it. Model calls will go through a proxy in platform-api, so the
+Anthropic key never enters the container (next step).
 
 ## Data
 
@@ -88,7 +108,11 @@ UPDATE, DELETE and TRUNCATE. `config/*.yaml` seeds an empty database once.
 ```
 POST /internal/approvals          (server-tools → platform-api, long request ≤ 5 min)
   {runId, chatId, tool, kind, server, command, reason} → {allowed, by}
-GET  /internal/runs/{token}       (server-tools → platform-api)
-  → {runId, chatId, system, env, requestedBy} | 404
+POST /internal/runs/resolve       (server-tools → platform-api)
+  {token} → {runId, chatId, system, env, requestedBy} | 404
+  (the token goes in the body, never in the URL: URLs end up in access logs)
 header X-Service-Token: <shared secret from Vault>
+
+POST /runner/finish               (agent container → platform-api)
+  {outcome: finished | failed, error?}       header Authorization: Bearer <run token>
 ```

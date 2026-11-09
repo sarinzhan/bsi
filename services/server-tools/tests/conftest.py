@@ -18,6 +18,11 @@ from server_tools.db import make_engine, migrate, sqlalchemy_url
 
 TEST_DATABASE_URL = os.environ.get("SUPERAI_TEST_DATABASE_URL")
 
+# Tests never use the developer's own service settings (e.g. an exported SUPERAI_DATABASE_URL):
+# some test modules import main.py, which builds the app at import time.
+for _name in [n for n in os.environ if n.startswith("SUPERAI_") and n != "SUPERAI_TEST_DATABASE_URL"]:
+    del os.environ[_name]
+
 
 @pytest.fixture
 def pg():

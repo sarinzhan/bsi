@@ -73,3 +73,28 @@ def test_role_changes_are_append_only(pg, tmp_path, sql):
     access_module(engine, tmp_path)
     with engine.begin() as conn, pytest.raises(exc.DBAPIError, match="append-only"):
         conn.execute(text(sql))
+
+
+# ---- agent module: runs ----
+
+def test_runs_are_stored_with_the_token_hash_and_found_by_it(pg, tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from platform_api.agent.adapters.outbound.postgres import PostgresRunRepository
+    from platform_api.agent.domain.run import Run, RunStatus, hash_token
+
+    engine, _ = pg
+    repo = PostgresRunRepository(engine)
+    t0 = datetime(2026, 11, 9, 10, 0, tzinfo=timezone.utc)
+    run = Run("run_1", "chat_1", "superapp", "dev", "sarinzha", hash_token("tok"), RunStatus.STARTING,
+              t0, t0 + timedelta(minutes=30))
+    repo.add(run)
+    repo.save(run.running())
+    assert repo.get("run_1").status is RunStatus.RUNNING
+    assert repo.by_token_hash(hash_token("tok")).id == "run_1" and repo.by_token_hash(hash_token("x")) is None
+    assert repo.active_overdue(t0 + timedelta(minutes=29)) == []
+    assert [r.id for r in repo.active_overdue(t0 + timedelta(minutes=30))] == ["run_1"]
+    repo.save(repo.get("run_1").ended(RunStatus.EXPIRED, "late"))
+    assert repo.active_overdue(t0 + timedelta(hours=1)) == []
+    with engine.connect() as conn:
+        assert "tok" not in str(conn.execute(text("SELECT * FROM runs")).all())

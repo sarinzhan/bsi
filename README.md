@@ -8,7 +8,7 @@ to servers that humans provide.
 ## Layout
 
 - `web/` — React frontend (Vite + TypeScript). Uses a mock API for now.
-- `services/platform-api/` — main backend (users and roles today; chat, agent, approvals next).
+- `services/platform-api/` — main backend: users and roles, agent runs (one container each). Chat and approvals next.
 - `services/server-tools/` — the only service with the SSH key; serves server tools to the agent over MCP.
 - `infra/postgres/` — local Postgres setup (one database and login per service).
 - `docs/` — architecture and roles.

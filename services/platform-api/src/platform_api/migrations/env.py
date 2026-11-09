@@ -14,6 +14,7 @@ from platform_api.db import Base, sqlalchemy_url
 
 # Import every module's ORM models, so autogenerate sees all tables. Add new modules here.
 import platform_api.access.adapters.postgres  # noqa: E402,F401
+import platform_api.agent.adapters.outbound.postgres  # noqa: E402,F401
 
 LOCK = 7_420_002  # two replicas starting at once do not migrate twice
 

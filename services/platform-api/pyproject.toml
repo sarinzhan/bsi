@@ -10,6 +10,7 @@ dependencies = [
   "sqlalchemy>=2.0.36,<3",     # ORM (sync: the ports are sync)
   "alembic>=1.14,<2",          # migrations
   "psycopg[binary]>=3.2,<4",  # Postgres driver used by SQLAlchemy
+  "docker>=7.1,<8",           # agent containers (Docker API)
 ]
 
 [dependency-groups]
@@ -34,17 +35,32 @@ include_external_packages = true
 [[tool.importlinter.contracts]]
 name = "Every module is layered: adapters -> application -> ports -> domain"
 type = "layers"
-containers = ["platform_api.access"]
+containers = ["platform_api.access", "platform_api.agent"]
 layers = ["adapters", "application", "ports", "domain"]
 
 [[tool.importlinter.contracts]]
 name = "Domain is pure: no frameworks, no I/O"
 type = "forbidden"
-source_modules = ["platform_api.access.domain"]
-forbidden_modules = ["starlette", "fastapi", "pydantic", "uvicorn", "yaml", "sqlalchemy", "alembic", "psycopg"]
+source_modules = ["platform_api.access.domain", "platform_api.agent.domain"]
+forbidden_modules = ["starlette", "fastapi", "pydantic", "uvicorn", "yaml", "sqlalchemy", "alembic", "psycopg",
+  "docker"]
 
 [[tool.importlinter.contracts]]
 name = "Use cases and ports know no web framework and no database library (those belong in adapters)"
 type = "forbidden"
-source_modules = ["platform_api.access.application", "platform_api.access.ports"]
-forbidden_modules = ["fastapi", "starlette", "pydantic", "sqlalchemy", "alembic", "psycopg", "yaml"]
+source_modules = ["platform_api.access.application", "platform_api.access.ports",
+                  "platform_api.agent.application", "platform_api.agent.ports"]
+forbidden_modules = ["fastapi", "starlette", "pydantic", "sqlalchemy", "alembic", "psycopg", "yaml", "docker"]
+
+[[tool.importlinter.contracts]]
+name = "agent sees access only through access.ports.provided"
+type = "forbidden"
+source_modules = ["platform_api.agent"]
+forbidden_modules = ["platform_api.access.domain", "platform_api.access.application", "platform_api.access.adapters",
+  "platform_api.access.ports.required"]
+
+[[tool.importlinter.contracts]]
+name = "access does not know agent"
+type = "forbidden"
+source_modules = ["platform_api.access"]
+forbidden_modules = ["platform_api.agent"]

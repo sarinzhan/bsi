@@ -48,7 +48,8 @@ uv run lint-imports  # architecture rules (layers, module boundaries, pure domai
 | variable | |
 |---|---|
 | `SUPERAI_MODE=prod` | real SSH, approvals and run tokens from platform-api |
-| `SUPERAI_PLATFORM_URL` | e.g. `http://platform-api:8000` |
+| `SUPERAI_PLATFORM_URL` | e.g. `http://platform-api:8000`. Also in dev: run tokens then come from that platform-api |
+| `SUPERAI_MCP_ALLOWED_HOSTS` | Host headers MCP accepts (default `localhost:*,127.0.0.1:*,server-tools:*`) |
 | `SUPERAI_SERVICE_TOKEN` | shared secret with platform-api (Vault) |
 | `SUPERAI_SSH_KEY`, `SUPERAI_KNOWN_HOSTS` | private key of the `deploy` user, pinned host keys |
 | `SUPERAI_DATABASE_URL` | Postgres (required in prod). Servers, access changes and the audit log live there |

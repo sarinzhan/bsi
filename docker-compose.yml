@@ -24,3 +24,10 @@ services:
 
 volumes:
   pgdata:
+
+networks:
+  # Agent containers (one per run) join only this network. internal: true = no internet access.
+  # Attach server-tools and platform-api to it when they run in compose; nothing else.
+  superai-agent-sandbox:
+    name: superai-agent-sandbox
+    internal: true

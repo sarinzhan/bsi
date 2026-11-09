@@ -2,7 +2,8 @@
 
 Contract (platform-api implements it in its `approval` and `agent` modules):
   POST /internal/approvals        -> {"allowed": bool, "by": str}   (long request, up to 5 min)
-  GET  /internal/runs/{token}     -> {"runId","chatId","system","env","requestedBy"} or 404
+  POST /internal/runs/resolve     {"token": str} -> {"runId","chatId","system","env","requestedBy"} or 404
+       (the token goes in the body, never in the URL: URLs end up in access logs)
 Both require header  X-Service-Token: <shared secret from Vault>.
 """
 
@@ -30,11 +31,12 @@ class PlatformApprovals(Approvals):
 
 
 class PlatformRunAuthority(RunAuthority):
-    def __init__(self, base_url: str, service_token: str) -> None:
-        self._client = httpx.AsyncClient(base_url=base_url, headers={"X-Service-Token": service_token}, timeout=5)
+    def __init__(self, base_url: str, service_token: str, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self._client = httpx.AsyncClient(base_url=base_url, headers={"X-Service-Token": service_token}, timeout=5,
+                                         transport=transport)  # transport: tests only
 
     async def resolve(self, token: str) -> RunContext | None:
-        r = await self._client.get(f"/internal/runs/{token}")
+        r = await self._client.post("/internal/runs/resolve", json={"token": token})
         if r.status_code == 404:
             return None
         r.raise_for_status()
