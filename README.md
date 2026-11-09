@@ -11,9 +11,21 @@ to servers that humans provide.
 - `services/platform-api/` — main backend: users and roles, agent runs (one container each). Chat and approvals next.
 - `services/server-tools/` — the only service with the SSH key; serves server tools to the agent over MCP.
 - `infra/postgres/` — local Postgres setup (one database and login per service).
+- `deploy/` — production: bsi-app compose, bsi-runner setup.
 - `docs/` — architecture and roles.
 
+## Run everything (Docker)
+
+    cp .env.example .env
+    docker compose up -d --build
+    open http://localhost:8080          # web app (API docs: http://localhost:8080/docs)
+
+Postgres, platform-api, server-tools (MCP at http://localhost:8100/mcp/, dev token `dev-superapp-dev`)
+and the web app, in dev mode. Production: [deploy/README.md](deploy/README.md).
+
 ## Database (Postgres)
+
+Only the database, e.g. to run the services from source with `uv run`:
 
     docker compose up -d postgres
 

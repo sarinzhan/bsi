@@ -92,6 +92,11 @@ def build_app() -> FastAPI:
                 engine.dispose()
 
     app = FastAPI(title="superAI platform-api", lifespan=lifespan)
+
+    @app.get("/health", tags=["ops"])
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     app.include_router(access_router(access.admin, current_user))
     app.include_router(runs_router(agent.runs, current_user))
     app.include_router(internal_router(agent.tokens, service_token))
