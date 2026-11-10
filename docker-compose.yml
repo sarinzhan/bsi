@@ -22,8 +22,8 @@
 # Empty (the default) = no proxy. Docker knows these build args and does not keep them in the image.
 # NO_PROXY: traffic between the containers never goes through the proxy.
 x-proxy-args: &proxy-args
-  HTTP_PROXY: ${BSI_HTTP_PROXY:-}
-  HTTPS_PROXY: ${BSI_HTTPS_PROXY:-}
+  HTTP_PROXY: ${BSI_PROXY:-}
+  HTTPS_PROXY: ${BSI_PROXY:-}
   NO_PROXY: localhost,127.0.0.1,postgres,platform-api,web
 
 x-hardening: &hardening
