@@ -17,6 +17,8 @@ FROM python:3.13.9-slim-bookworm
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY agent /app/prompts
+# readable by 1000:1000 whatever the file modes were where the image was built (e.g. 0600 on a laptop)
+RUN chmod -R a+rX /app/prompts
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

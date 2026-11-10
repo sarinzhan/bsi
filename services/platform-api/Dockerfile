@@ -20,6 +20,8 @@ RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin bsi 
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY config ./config
+# readable by the app user whatever the file modes were where the image was built (e.g. 0600 on a laptop)
+RUN chmod -R a+rX /app/config
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     BSI_USERS_FILE=/app/config/users.yaml \
