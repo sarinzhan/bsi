@@ -37,18 +37,23 @@ async def main() -> int:
     platform = PlatformApi(os.environ["BSI_PLATFORM_URL"], token)
     deadline = os.environ.get("BSI_RUN_DEADLINE")
     system_prompt = prompts.load(Path(os.environ.get("BSI_PROMPTS_DIR", str(DEFAULT_PROMPTS))))
+    run_id = os.environ.get("BSI_RUN_ID", "?")
+    print(f"agent run {run_id}: start, platform {os.environ['BSI_PLATFORM_URL']}, tools {os.environ['BSI_MCP_URL']}, "
+          f"proxy {os.environ.get('HTTPS_PROXY') or 'none'}", flush=True)
     try:
         model = model_from_env()
         async with mcp_tools.connect(os.environ["BSI_MCP_URL"], token) as tools:
+            print(f"agent run {run_id}: connected to the server tools", flush=True)
             outcome = await loop.run(model, tools, platform, system_prompt,
                                      deadline=datetime.fromisoformat(deadline) if deadline else None)
     except Exception as e:  # could not even connect to the server tools
+        print(f"agent run {run_id}: cannot reach the server tools: {e!r}", flush=True)
         try:
             await platform.finish("failed", f"cannot reach the server tools: {type(e).__name__}")
         except Exception:
             pass  # platform-api unreachable too: the run expires at its deadline
         outcome = "failed"
-    print(f"agent run {os.environ.get('BSI_RUN_ID', '?')}: {outcome}", flush=True)
+    print(f"agent run {run_id}: {outcome}", flush=True)
     return 0 if outcome == "finished" else 1
 
 

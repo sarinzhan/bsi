@@ -17,6 +17,15 @@
 # Approvals are real (cards in the chat). Agent runs: none by default (fake sandbox); for real agent
 # containers add docker-compose.agents.yml (see that file).
 
+# Company proxy for builds (pip/uv, npm) and for agent containers (api.anthropic.com).
+# Set BSI_PROXY in .env on a server without direct internet, e.g. BSI_PROXY=http://10.16.195.94:8080.
+# Empty (the default) = no proxy. Docker knows these build args and does not keep them in the image.
+# NO_PROXY: traffic between the containers never goes through the proxy.
+x-proxy-args: &proxy-args
+  HTTP_PROXY: ${BSI_PROXY:-}
+  HTTPS_PROXY: ${BSI_PROXY:-}
+  NO_PROXY: localhost,127.0.0.1,postgres,platform-api,web
+
 x-hardening: &hardening
   read_only: true                     # nothing in the image can be changed at run time
   cap_drop: [ALL]
@@ -49,7 +58,9 @@ services:
 
   platform-api:
     <<: *hardening
-    build: ./services/platform-api
+    build:
+      context: ./services/platform-api
+      args: *proxy-args
     image: ${BSI_IMAGES:-bsi}/platform-api:${BSI_TAG:-local}
     environment:
       BSI_MODE: dev
@@ -60,6 +71,7 @@ services:
       BSI_MODEL: ${BSI_MODEL:-claude-opus-5-5}
       # No model proxy yet: the key is passed into each agent container (see docs/architecture.md)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      BSI_AGENT_HTTPS_PROXY: ${BSI_PROXY:-}   # agent containers reach the model API through it (empty: direct)
       BSI_RUN_MCP_URL: http://platform-api:8000/mcp/
       BSI_RUN_PLATFORM_URL: http://platform-api:8000
       # Fixed dev tokens "dev-<system>-<env>" also work at /mcp/, so you can connect your own Claude Code
@@ -77,6 +89,7 @@ services:
     build:
       context: ./web
       args:
+        <<: *proxy-args
         BSI_BASE_PATH: ${BSI_BASE_PATH:-/}   # e.g. /bsi/ when a shared nginx serves BSI under /bsi/
     image: ${BSI_IMAGES:-bsi}/web:${BSI_TAG:-local}
     tmpfs: [/tmp, /var/cache/nginx]
@@ -88,7 +101,10 @@ services:
 
   agent-runner:                       # build only: docker compose --profile build build agent-runner
     profiles: [build]
-    build: {context: ., dockerfile: services/agent-runner/Dockerfile}
+    build:
+      context: .
+      dockerfile: services/agent-runner/Dockerfile
+      args: *proxy-args
     image: ${BSI_IMAGES:-bsi}/agent-runner:${BSI_TAG:-local}
 
 volumes:

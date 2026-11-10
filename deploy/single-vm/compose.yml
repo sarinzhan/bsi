@@ -28,6 +28,7 @@ services:
       BSI_SSH_KEY: /run/ssh/id_ed25519
       BSI_KNOWN_HOSTS: /run/ssh/known_hosts
       BSI_REGISTRY: ${BSI_REGISTRY:-registry}   # docker_run accepts only images from here
+      # company proxy: BSI_PROXY in .env (docker-compose.yml passes it to builds and agent containers)
     volumes:
       - /etc/bsi/ssh:/run/ssh:ro
 

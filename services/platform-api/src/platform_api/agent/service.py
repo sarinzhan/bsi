@@ -5,6 +5,7 @@ start: check the user -> new run + token -> save (hash only) -> start the contai
 
 from __future__ import annotations
 
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from platform_api.agent.schemas import RunInfo, RunNotAllowed, RunNotFound, RunR
 from platform_api.agent.interfaces import RunListener, RunRepository, Sandbox, SandboxSpec
 
 USE_CHAT = "chat.use"  # access permission needed to start a run
+log = logging.getLogger("platform_api.agent")
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class RunService(Runs, RunTokens, RunReaper):
 
     def _ended(self, run: Run) -> RunInfo:
         info = _info(run)
+        log.info("run %s %s%s", run.id, run.status.value, f": {run.error}" if run.error else "")
         if self._listener is not None:
             try:
                 self._listener.ended(info)
@@ -88,9 +91,12 @@ class RunService(Runs, RunTokens, RunReaper):
         except Exception as e:  # no container = no run; the token is dead from now on
             failed = run.ended(RunStatus.FAILED, f"sandbox did not start: {type(e).__name__}: {e}")
             self._runs.save(failed)
+            log.warning("run %s for chat %s could not start: %s", run.id, chat_id, failed.error)
             return _info(failed)
         running = run.running()
         self._runs.save(running)
+        log.info("run %s started for chat %s by %s (%s/%s), container bsi-%s", run.id, chat_id, user_id, system, env,
+                 run.id)
         return _info(running)
 
     def cancel(self, user_id: str, run_id: str) -> RunInfo:

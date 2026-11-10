@@ -107,6 +107,9 @@ An image built for `/bsi/` only works under `/bsi/`, and one built for `/` only 
   sudo docker login                          # an access token with read-only scope is enough
   sudo docker compose --profile build pull   # --profile build: pulls agent-runner too
   ```
+- **Behind a company proxy:** set `BSI_PROXY=http://<proxy>:<port>` in `.env`. Builds on the server and
+  agent containers then use it.
+  For the app under `/bsi/`, also put `BSI_BASE_PATH=/bsi/` in `.env`.
 - **Built on the server:** `sudo docker compose --profile build build agent-runner` (it builds the
   others on `up --build`).
 

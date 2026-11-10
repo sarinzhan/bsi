@@ -52,6 +52,8 @@ log = logging.getLogger("platform_api")
 def build_app() -> FastAPI:
     env = os.environ.get
     mode = env("BSI_MODE", "dev")
+    if not logging.getLogger().handlers:  # our INFO lines (runs started/ended) in docker compose logs
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     # Postgres when BSI_DATABASE_URL is set (required in prod); otherwise YAML/JSONL files and memory.
     database_url = env("BSI_DATABASE_URL")
@@ -99,6 +101,15 @@ def build_app() -> FastAPI:
                "BSI_LLM": env("BSI_LLM", "anthropic")}  # "scripted": a fake model, no key needed
     if env("ANTHROPIC_API_KEY"):
         run_env["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
+    # Server without direct internet: agent containers reach the Anthropic API through this proxy.
+    # Calls to platform-api itself must not go through it (NO_PROXY).
+    if env("BSI_AGENT_HTTPS_PROXY"):
+        run_env["HTTPS_PROXY"] = os.environ["BSI_AGENT_HTTPS_PROXY"]
+        run_env["NO_PROXY"] = "platform-api,localhost,127.0.0.1"
+    log.info("BSI platform-api: mode=%s database=%s sandbox=%s agent image=%s executor=%s approvals=%s proxy=%s",
+             mode, "postgres" if database_url else "files", sandbox_kind, env("BSI_AGENT_IMAGE", "-"),
+             "ssh" if (mode == "prod" or env("BSI_EXECUTOR") == "ssh") else "FAKE",
+             env("BSI_APPROVALS", "cards"), env("BSI_AGENT_HTTPS_PROXY") or "none")
     listener = ChatRunListener()
     agent = create_agent_module(access.check, sandbox, RunSettings(
         mcp_url=env("BSI_RUN_MCP_URL", "http://platform-api:8000/mcp/"),  # as the container sees them
