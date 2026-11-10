@@ -1,4 +1,4 @@
-# superAI, the whole stack on one machine (local development and trying it out).
+# BSI, the whole stack on one machine (local development and trying it out).
 #
 #   cp .env.example .env              # once; change the values if you like
 #   docker compose up -d --build
@@ -8,13 +8,14 @@
 # agent containers on a separate runner VM).
 #
 # Networks (who can talk to whom):
-#   backend                 postgres, platform-api, server-tools, web
-#   superai-agent-sandbox   platform-api, server-tools and the agent containers. internal = no internet.
+#   backend                 postgres, platform-api, web
+#   bsi-agent-sandbox   platform-api and the agent containers.
 #                           Agent containers can NOT reach postgres or web.
 #
-# Dev mode on purpose: prod mode needs company SSO (not wired yet) and the approval module (next step).
-# In dev, the web app signs you in with the "Viewing as" switcher, server-tools uses a fake SSH executor
-# and answers approvals itself, and platform-api starts no real agent containers.
+# Dev mode on purpose: prod mode needs company SSO (not wired yet).
+# In dev, the web app signs you in with the "Viewing as" switcher and the server tools use a fake SSH executor.
+# Approvals are real (cards in the chat). Agent runs: none by default (fake sandbox); for real agent
+# containers add docker-compose.agents.yml (see that file).
 
 x-hardening: &hardening
   read_only: true                     # nothing in the image can be changed at run time
@@ -30,7 +31,7 @@ services:
   postgres:
     image: postgres:17.6-alpine
     environment:
-      POSTGRES_USER: superai_admin
+      POSTGRES_USER: bsi_admin
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-dev-admin}
       POSTGRES_DB: postgres
     ports:
@@ -40,7 +41,7 @@ services:
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro   # one database + login per service
     networks: [backend]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U superai_admin -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U bsi_admin -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -49,40 +50,32 @@ services:
   platform-api:
     <<: *hardening
     build: ./services/platform-api
-    image: superai/platform-api:local
+    image: bsi/platform-api:local
     environment:
-      SUPERAI_MODE: dev
-      SUPERAI_DATABASE_URL: postgresql://platform:dev-platform@postgres:5432/platform
-      SUPERAI_SERVICE_TOKEN: ${SUPERAI_SERVICE_TOKEN:?set it in .env}
-      SUPERAI_SANDBOX: fake           # starts no containers (see "real agent containers" at the end)
-      SUPERAI_RUN_MCP_URL: http://server-tools:8100/mcp/
-      SUPERAI_RUN_PLATFORM_URL: http://platform-api:8000
-    networks: [backend, superai-agent-sandbox]
+      BSI_MODE: dev
+      BSI_DATABASE_URL: postgresql://platform:dev-platform@postgres:5432/platform
+      BSI_SANDBOX: fake           # starts no containers; docker-compose.agents.yml switches to real ones
+      BSI_RUN_TTL_S: "600"
+      BSI_LLM: ${BSI_LLM:-anthropic}          # "scripted": a fake model, no key needed
+      BSI_MODEL: ${BSI_MODEL:-claude-opus-5-5}
+      # No model proxy yet: the key is passed into each agent container (see docs/architecture.md)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      BSI_RUN_MCP_URL: http://platform-api:8000/mcp/
+      BSI_RUN_PLATFORM_URL: http://platform-api:8000
+      # Fixed dev tokens "dev-<system>-<env>" also work at /mcp/, so you can connect your own Claude Code
+      # to http://localhost:8000/mcp/ (its approvals are denied: there is no chat to ask in).
+      BSI_DEV_TOKENS: "on"
+    ports:
+      - "127.0.0.1:8000:8000"         # MCP for your own client, API docs; this machine only
+    networks: [backend, bsi-agent-sandbox]
     depends_on:
       postgres: {condition: service_healthy}
 
-  server-tools:
-    <<: *hardening
-    build: ./services/server-tools
-    image: superai/server-tools:local
-    environment:
-      SUPERAI_MODE: dev               # fake SSH, approvals answered automatically
-      SUPERAI_DATABASE_URL: postgresql://server_tools:dev-server-tools@postgres:5432/server_tools
-      SUPERAI_SERVICE_TOKEN: ${SUPERAI_SERVICE_TOKEN:?set it in .env}
-      # Run tokens: fixed dev tokens "dev-<system>-<env>" by default, so you can connect your own
-      # Claude Code to http://localhost:8100/mcp/ right away. To accept only real run tokens from
-      # platform-api (as in prod), uncomment:
-      # SUPERAI_PLATFORM_URL: http://platform-api:8000
-    ports:
-      - "127.0.0.1:8100:8100"         # MCP for local clients; this machine only
-    networks: [backend, superai-agent-sandbox]
-    depends_on:
-      postgres: {condition: service_healthy}
 
   web:
     <<: *hardening
     build: ./web
-    image: superai/web:local
+    image: bsi/web:local
     tmpfs: [/tmp, /var/cache/nginx]
     ports:
       - "127.0.0.1:8080:8080"
@@ -90,19 +83,18 @@ services:
     depends_on:
       platform-api: {condition: service_healthy}
 
+  agent-runner:                       # build only: docker compose --profile build build agent-runner
+    profiles: [build]
+    build: {context: ., dockerfile: services/agent-runner/Dockerfile}
+    image: bsi/agent-runner:local
+
 volumes:
   pgdata:
 
 networks:
   backend:
-  superai-agent-sandbox:
-    name: superai-agent-sandbox       # fixed name: platform-api starts agent containers on it
-    internal: true
-
-# ---- Real agent containers on this machine (once the agent-runner image exists) ----
-# In platform-api above, set:
-#     SUPERAI_SANDBOX: docker
-#     SUPERAI_AGENT_IMAGE: registry/superai/agent-runner:<version>
-#     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
-# LOCAL ONLY: access to the Docker socket is root on this machine. In prod, platform-api controls Docker
-# on the separate bsi-runner VM over mutual TLS instead (deploy/bsi-app/compose.yml).
+  bsi-agent-sandbox:
+    name: bsi-agent-sandbox       # fixed name: platform-api starts agent containers on it
+    # Not internal while there is no model proxy: agent containers call api.anthropic.com themselves.
+    # With a model proxy in platform-api this becomes internal: true again (no internet).
+    internal: false

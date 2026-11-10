@@ -1,0 +1,18 @@
+# Real agent containers on this machine, on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.agents.yml --profile build build agent-runner
+#   docker compose -f docker-compose.yml -f docker-compose.agents.yml up -d --build
+#
+# Set ANTHROPIC_API_KEY in .env, or BSI_LLM=scripted to test the whole chain without a model.
+#
+# LOCAL ONLY: platform-api gets the Docker socket, which is root on this machine. In prod it controls Docker
+# on the separate bsi-runner VM over mutual TLS instead (deploy/bsi-app/compose.yml).
+services:
+  platform-api:
+    user: root                        # the Docker socket belongs to root
+    environment:
+      BSI_SANDBOX: docker
+      BSI_AGENT_IMAGE: bsi/agent-runner:local
+      BSI_SANDBOX_NETWORK: bsi-agent-sandbox
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

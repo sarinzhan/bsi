@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from platform_api.access.adapters.files import JsonlRoleChangeLog, YamlUserRepository
-from platform_api.access.application.access import AccessService
-from platform_api.access.domain.roles import RolesChanged
-from platform_api.access.ports.provided import AccessCheck, UserAdmin
-from platform_api.access.ports.required import RoleChangeLog, UserRepository
+from platform_api.access.repositories.files import JsonlRoleChangeLog, YamlUserRepository
+from platform_api.access.service import AccessService
+from platform_api.access.models import RolesChanged
+from platform_api.access.schemas import AccessCheck, UserAdmin
+from platform_api.access.interfaces import RoleChangeLog, UserRepository
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -32,7 +32,7 @@ def create_access_module(users_file: Path, role_log: Path, engine: "Engine | Non
     if engine is None:
         users, log = YamlUserRepository(users_file), JsonlRoleChangeLog(role_log)
     else:
-        from platform_api.access.adapters.postgres import PostgresRoleChangeLog, PostgresUserRepository
+        from platform_api.access.repositories.postgres import PostgresRoleChangeLog, PostgresUserRepository
 
         users, log = PostgresUserRepository(engine), PostgresRoleChangeLog(engine)
         if users.is_empty() and users_file.exists():

@@ -1,12 +1,12 @@
 import type {
   AccessChange, AgentEvent, Role, RoleChange, User, Chat, ChatSummary, Decision, Project, ProjectSummary, Resource, Server, ServerToolInfo, Skill, SystemInfo, ToolAnswer,
 } from './types';
+import { httpApi } from './http';
 import { mockApi } from './mock';
 
 /**
  * Everything the UI needs from the platform backend.
- * Today it is implemented by mockApi. A real implementation will use
- * fetch() for the queries and an EventSource (SSE) for sendMessage.
+ * Implemented by httpApi (the real platform-api, see http.ts) and mockApi (in-memory, for UI work).
  */
 export interface PlatformApi {
   listSystems(): Promise<SystemInfo[]>;
@@ -38,10 +38,14 @@ export interface PlatformApi {
   /** Server settings (platform admins): the tools the agent may use. Rejects ssh_exec on prod. */
   updateServerAccess(name: string, allowedTools: string[], reason: string): Promise<Server>;
   listAccessChanges(name: string): Promise<AccessChange[]>;
-  /** Served by the server-tools service (GET /api/tools). */
+  /** The server tools that exist (GET /api/servers/tools). */
   listServerTools(): Promise<ServerToolInfo[]>;
   listResources(systemId: string): Promise<Resource[]>;
   listSkills(): Promise<Skill[]>;
 }
 
-export const api: PlatformApi = mockApi;
+/**
+ * The real backend by default. VITE_API=mock (e.g. `VITE_API=mock npm run dev`) runs the UI on in-memory
+ * mock data, without any backend.
+ */
+export const api: PlatformApi = import.meta.env.VITE_API === 'mock' ? mockApi : httpApi;

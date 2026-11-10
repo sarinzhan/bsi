@@ -1,6 +1,6 @@
-# Server tools (MCP, served by the server-tools service)
+# Server tools (MCP, served by platform-api at /mcp/)
 
-Implementation: `services/server-tools/` (see `docs/architecture.md`).
+Implementation: `services/platform-api/src/platform_api/tools/` (see `docs/architecture.md`).
 
 The agent never gets SSH. It calls these tools; the platform checks the
 arguments, asks the developer for approval, runs a **fixed** command over SSH
@@ -9,7 +9,7 @@ with its own key, masks secrets and returns the output.
 ## Allowed tools per server
 
 Each server has a **list of allowed tools**, set by a platform admin in the server
-settings (stored as `allowed_tools` in `services/server-tools/config/servers.yaml`).
+settings (platform-api's servers module; seeded from `services/platform-api/config/servers.yaml`).
 Missing or empty list = the agent can do nothing on that server.
 
 Typical lists:
@@ -29,7 +29,7 @@ Typical lists:
 
 Rules the platform enforces for every tool:
 - `server` and `service` must belong to the chat's system and environment
-- paths must be inside `/opt/superai/<system>/<env>/` (no `..`, no symlinks out,
+- paths must be inside `/opt/bsi/<system>/<env>/` (no `..`, no symlinks out,
   no keys/certificates: `*.pem`, `*.key`, `id_*`)
 - output is capped (500 lines / 200 KB) and secrets are masked
 - every call goes to the audit log: who approved, exact command, time, result
@@ -51,7 +51,7 @@ Rules the platform enforces for every tool:
 | tool | input | platform runs |
 |---|---|---|
 | `file_write` | `server, path, content, reason` | writes the file atomically, keeps a `.bak` copy |
-| `docker_run` | `server, image, command?, env?, reason` | `docker run --rm --label superai.system=<system> --label superai.adhoc=true --network <system>-<env> <image> <command>` |
+| `docker_run` | `server, image, command?, env?, reason` | `docker run --rm --label bsi.system=<system> --label bsi.adhoc=true --network <system>-<env> <image> <command>` |
 | `compose_run` | `server, service, command, reason` | `docker compose -p <system>-<env> run --rm <service> <command>` |
 | `compose_restart` | `server, service, reason` | `docker compose -p <system>-<env> restart <service>` |
 

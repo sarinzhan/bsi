@@ -42,7 +42,7 @@ export default function Sidebar() {
     <nav className="sidebar" aria-label="Main">
       <div className="logo">
         <div className="logo-mark">&lt;/&gt;</div>
-        <span>superAI</span>
+        <span>BSI</span>
       </div>
 
       <label className="nav-label" htmlFor="system" style={{ paddingTop: 0 }}>System</label>

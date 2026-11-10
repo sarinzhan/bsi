@@ -1,6 +1,6 @@
 import type { ServerToolInfo, ToolKind } from './types';
 
-// Mirrors services/server-tools (GET /api/tools and the commands it builds).
+// Mirrors platform-api's tools module (GET /api/servers/tools and the commands it builds).
 
 const approval: Record<ToolKind, string> = {
   read: 'once per server per chat · developer, devops or admin',
@@ -28,7 +28,7 @@ export const serverTools: ServerToolInfo[] = [
 
 export const kindOf = (tool: string): ToolKind => serverTools.find((x) => x.name === tool)?.kind ?? 'read';
 
-/** The same fixed commands server-tools builds. */
+/** The same fixed commands platform-api's tools module builds. */
 export function commandFor(tool: string, system: string, env: string, service = ''): string {
   const project = `${system}-${env}`;
   const container =
@@ -41,7 +41,7 @@ export function commandFor(tool: string, system: string, env: string, service = 
     case 'docker_logs':
       return `${container}; docker logs --since 1h --tail 200 "$c" 2>&1`;
     case 'compose_restart':
-      return `cd /opt/superai/${system}/${env} && docker compose -p ${project} restart ${service}`;
+      return `cd /opt/bsi/${system}/${env} && docker compose -p ${project} restart ${service}`;
     default:
       return tool;
   }

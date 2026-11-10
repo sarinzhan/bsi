@@ -1,5 +1,5 @@
-# superAI web: the React app as static files, served by nginx, which also forwards /api to platform-api.
-# Build from this folder:  docker build -t registry/superai/web:<version> .
+# BSI web: the React app as static files, served by nginx, which also forwards /api to platform-api.
+# Build from this folder:  docker build -t registry/bsi/web:<version> .
 
 FROM node:22.20.0-alpine3.22 AS build
 WORKDIR /app

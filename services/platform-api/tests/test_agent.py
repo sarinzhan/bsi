@@ -9,16 +9,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from platform_api.access import create_access_module
-from platform_api.agent.adapters.inbound.http_api import internal_router, runner_router, runs_router
-from platform_api.agent.adapters.outbound.docker_sandbox import DockerSandbox
-from platform_api.agent.adapters.outbound.fake_sandbox import FakeSandbox
-from platform_api.agent.adapters.outbound.memory import InMemoryRunRepository
-from platform_api.agent.application.runs import RunService, RunSettings
-from platform_api.agent.ports.provided import RunNotAllowed, RunNotFound, RunRejected
-from platform_api.agent.ports.required import SandboxError, SandboxSpec
+from platform_api.agent.router import runner_router, runs_router
+from platform_api.agent.integrations.docker_sandbox import DockerSandbox
+from platform_api.agent.integrations.fake_sandbox import FakeSandbox
+from platform_api.agent.repositories.memory import InMemoryRunRepository
+from platform_api.agent.service import RunService, RunSettings
+from platform_api.agent.schemas import RunNotAllowed, RunNotFound, RunRejected
+from platform_api.agent.interfaces import SandboxError, SandboxSpec
 
 USERS = Path(__file__).resolve().parents[1] / "config/users.yaml"
-SETTINGS = RunSettings(mcp_url="http://server-tools:8100/mcp/", platform_url="http://platform-api:8000",
+SETTINGS = RunSettings(mcp_url="http://platform-api:8000/mcp/", platform_url="http://platform-api:8000",
                        ttl=timedelta(minutes=30))
 T0 = datetime(2026, 11, 9, 10, 0, tzinfo=timezone.utc)
 
@@ -42,7 +42,7 @@ def env(tmp_path):
 
 
 def token_of(sandbox, i=-1):
-    return sandbox.started[i].env["SUPERAI_RUN_TOKEN"]
+    return sandbox.started[i].env["BSI_RUN_TOKEN"]
 
 
 def test_start_creates_a_container_that_gets_the_token_and_where_to_find_the_tools(env):
@@ -51,9 +51,9 @@ def test_start_creates_a_container_that_gets_the_token_and_where_to_find_the_too
     assert run.status == "running" and run.requested_by == "sarinzha"
     assert run.expires_at == "2026-11-09T10:30:00+00:00"
     [spec] = sandbox.started
-    assert spec.env["SUPERAI_MCP_URL"] == "http://server-tools:8100/mcp/"
-    assert spec.env["SUPERAI_RUN_ID"] == run.run_id and spec.env["SUPERAI_RUN_TOKEN"] == "token-0"
-    assert spec.labels["superai.system"] == "superapp" and spec.labels["superai.env"] == "dev"
+    assert spec.env["BSI_MCP_URL"] == "http://platform-api:8000/mcp/"
+    assert spec.env["BSI_RUN_ID"] == run.run_id and spec.env["BSI_RUN_TOKEN"] == "token-0"
+    assert spec.labels["bsi.system"] == "superapp" and spec.labels["bsi.env"] == "dev"
 
 
 def test_only_a_hash_of_the_token_is_stored(env):
@@ -131,7 +131,6 @@ def client(env):
     service, _, sandbox, _ = env
     app = FastAPI()
     app.include_router(runs_router(service, lambda r: r.headers.get("x-user-id")))
-    app.include_router(internal_router(service, "svc-secret"))
     app.include_router(runner_router(service))
     return TestClient(app), sandbox
 
@@ -147,19 +146,6 @@ def test_http_start_never_returns_the_token(client):
     assert bad.status_code == 422
 
 
-def test_http_internal_resolve_is_the_contract_server_tools_reads(client):
-    c, sandbox = client
-    run = c.post("/api/runs", json={"chatId": "c1", "system": "superapp", "env": "dev"},
-                 headers={"X-User-Id": "sarinzha"}).json()
-    body = {"token": token_of(sandbox)}
-    assert c.post("/internal/runs/resolve", json=body).status_code == 401  # no service token
-    r = c.post("/internal/runs/resolve", json=body, headers={"X-Service-Token": "svc-secret"})
-    assert r.json() == {"runId": run["run_id"], "chatId": "c1", "system": "superapp", "env": "dev",
-                        "requestedBy": "sarinzha"}
-    assert c.post("/internal/runs/resolve", json={"token": "nope"},
-                  headers={"X-Service-Token": "svc-secret"}).status_code == 404
-
-
 def test_http_runner_finishes_with_its_own_token(client):
     c, sandbox = client
     c.post("/api/runs", json={"chatId": "c1", "system": "superapp", "env": "dev"}, headers={"X-User-Id": "sarinzha"})
@@ -169,7 +155,7 @@ def test_http_runner_finishes_with_its_own_token(client):
     assert c.post("/runner/finish", json={"outcome": "finished"}, headers=auth).status_code == 401  # ended
 
 
-# ---- Docker adapter (fake Docker client: no daemon needed) ----
+# ---- Docker sandbox (fake Docker client: no daemon needed) ----
 
 class FakeDocker:
     class NotFound(Exception):
@@ -183,7 +169,7 @@ class FakeDocker:
         self.run_kwargs = {"image": image, **kwargs}
 
     def get(self, name):
-        if name != "superai-run_1":
+        if name != "bsi-run_1":
             raise FakeDocker.NotFound(name)
         docker = self
 
@@ -196,25 +182,25 @@ class FakeDocker:
 
 def test_docker_container_is_locked_down():
     docker = FakeDocker()
-    DockerSandbox("registry/superai/agent-runner:0.1.0", "superai-agent-sandbox", client=docker).start(
-        SandboxSpec("run_1", {"SUPERAI_RUN_TOKEN": "t"}, {"superai.system": "superapp"}))
+    DockerSandbox("registry/bsi/agent-runner:0.1.0", "bsi-agent-sandbox", client=docker).start(
+        SandboxSpec("run_1", {"BSI_RUN_TOKEN": "t"}, {"bsi.system": "superapp"}))
     k = docker.run_kwargs
-    assert k["image"] == "registry/superai/agent-runner:0.1.0" and k["name"] == "superai-run_1"
-    assert k["network"] == "superai-agent-sandbox" and k["auto_remove"] and k["detach"]
+    assert k["image"] == "registry/bsi/agent-runner:0.1.0" and k["name"] == "bsi-run_1"
+    assert k["network"] == "bsi-agent-sandbox" and k["auto_remove"] and k["detach"]
     assert k["user"] == "1000:1000" and k["read_only"] and k["cap_drop"] == ["ALL"]
     assert k["security_opt"] == ["no-new-privileges"] and k["pids_limit"] == 256
     assert k["mem_limit"] == k["memswap_limit"] == "2g" and k["nano_cpus"] == 1_000_000_000
     assert "privileged" not in k and "volumes" not in k  # no Docker socket, no host folders
-    assert k["environment"] == {"SUPERAI_RUN_TOKEN": "t"}
+    assert k["environment"] == {"BSI_RUN_TOKEN": "t"}
 
 
 def test_docker_stop_is_idempotent_and_latest_images_are_refused():
     docker = FakeDocker()
-    sandbox = DockerSandbox("registry/superai/agent-runner:0.1.0", "net", client=docker)
+    sandbox = DockerSandbox("registry/bsi/agent-runner:0.1.0", "net", client=docker)
     sandbox.stop("run_1")
     sandbox.stop("run_gone")  # NotFound: already removed, fine
-    assert docker.stopped == ["superai-run_1"]
-    for image in ["registry/superai/agent-runner:latest", "registry/superai/agent-runner"]:
+    assert docker.stopped == ["bsi-run_1"]
+    for image in ["registry/bsi/agent-runner:latest", "registry/bsi/agent-runner"]:
         with pytest.raises(ValueError, match="pinned"):
             DockerSandbox(image, "net", client=docker)
 
@@ -225,4 +211,4 @@ def test_docker_errors_become_sandbox_errors():
             raise RuntimeError("daemon not running")
 
     with pytest.raises(SandboxError, match="daemon not running"):
-        DockerSandbox("registry/superai/agent-runner:0.1.0", "net", client=Broken()).start(SandboxSpec("r", {}))
+        DockerSandbox("registry/bsi/agent-runner:0.1.0", "net", client=Broken()).start(SandboxSpec("r", {}))

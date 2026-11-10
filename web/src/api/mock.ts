@@ -34,7 +34,7 @@ async function callTool(chatId: string, send: Send, tool: string, server: string
   const show = (c: ToolCall) => send({ type: 'message', message: { id: c.id, role: 'tool', call: c } satisfies ToolMessage });
   const allowed = servers.find((s) => s.name === server)?.allowedTools ?? [];
   if (!allowed.includes(tool)) {
-    // Same as server-tools: rejected before the developer is asked.
+    // Same as the backend: rejected before the developer is asked.
     show({ ...call, status: 'failed', output: `Rejected: ${tool} is not allowed on ${server} (server settings). Allowed: ${allowed.join(', ') || 'nothing'}` });
     return false;
   }

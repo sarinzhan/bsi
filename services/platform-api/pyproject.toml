@@ -1,7 +1,7 @@
 [project]
 name = "platform-api"
 version = "0.1.0"
-description = "superAI platform API: a modular monolith (access, chat, agent, approval, project, history, skills)."
+description = "BSI platform-api: one process with the modules access, servers, agent, chat, approval and tools (MCP)."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -11,6 +11,8 @@ dependencies = [
   "alembic>=1.14,<2",          # migrations
   "psycopg[binary]>=3.2,<4",  # Postgres driver used by SQLAlchemy
   "docker>=7.1,<8",           # agent containers (Docker API)
+  "mcp>=2.3,<3",              # the server tools agents call (MCP server at /mcp/)
+  "asyncssh>=2.17,<3",        # runs the tools on servers (the SSH key lives in this process)
 ]
 
 [dependency-groups]
@@ -27,40 +29,261 @@ packages = ["src/platform_api"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
 
-# ---- Architecture rules, checked by `lint-imports` (same rules as server-tools) ----
+# ---- Architecture rules, checked by `lint-imports` ----
+# Every module has the same layers:  router -> service -> repositories / integrations -> models
+#   router.py        HTTP (or MCP) in, calls the service
+#   service.py       business logic; needs storage and outside systems only through interfaces.py
+#   schemas.py       what the service returns to callers, and its errors
+#   interfaces.py    what the service needs (repositories, sandbox, SSH...)
+#   models.py        entities and rules, plain Python
+#   repositories/    storage (Postgres, memory, files);  integrations/  everything else outside
+# A module uses another module only through that module's schemas.py. Wiring is in main.py and wiring.py.
 [tool.importlinter]
 root_package = "platform_api"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Every module is layered: adapters -> application -> ports -> domain"
+name = "access: layers (router, repositories, integrations -> service -> interfaces, schemas -> models)"
 type = "layers"
-containers = ["platform_api.access", "platform_api.agent"]
-layers = ["adapters", "application", "ports", "domain"]
+containers = ["platform_api.access"]
+layers = [
+  "router | repositories",
+  "service",
+  "interfaces : schemas",
+  "models",
+]
 
 [[tool.importlinter.contracts]]
-name = "Domain is pure: no frameworks, no I/O"
+name = "servers: layers (router, repositories, integrations -> service -> interfaces, schemas -> models)"
+type = "layers"
+containers = ["platform_api.servers"]
+layers = [
+  "router | repositories | integrations",
+  "service",
+  "interfaces : schemas",
+  "models",
+]
+
+[[tool.importlinter.contracts]]
+name = "agent: layers (router, repositories, integrations -> service -> interfaces, schemas -> models)"
+type = "layers"
+containers = ["platform_api.agent"]
+layers = [
+  "router | repositories | integrations",
+  "service",
+  "interfaces : schemas",
+  "models",
+]
+
+[[tool.importlinter.contracts]]
+name = "chat: layers (router, repositories, integrations -> service -> interfaces, schemas -> models)"
+type = "layers"
+containers = ["platform_api.chat"]
+layers = [
+  "router | repositories",
+  "service",
+  "interfaces : schemas",
+  "models",
+]
+
+[[tool.importlinter.contracts]]
+name = "approval: layers (router, repositories, integrations -> service -> interfaces, schemas -> models)"
+type = "layers"
+containers = ["platform_api.approval"]
+layers = [
+  "router | repositories",
+  "service",
+  "interfaces : schemas",
+  "models",
+]
+
+[[tool.importlinter.contracts]]
+name = "tools: layers (router, repositories, integrations -> service -> interfaces, schemas -> models)"
+type = "layers"
+containers = ["platform_api.tools"]
+layers = [
+  "router | repositories | integrations",
+  "service",
+  "interfaces : schemas",
+  "catalog",
+  "rules : masking",
+  "models",
+]
+
+[[tool.importlinter.contracts]]
+name = "models are plain Python: no frameworks, no database, no network"
 type = "forbidden"
-source_modules = ["platform_api.access.domain", "platform_api.agent.domain"]
-forbidden_modules = ["starlette", "fastapi", "pydantic", "uvicorn", "yaml", "sqlalchemy", "alembic", "psycopg",
-  "docker"]
+source_modules = [
+  "platform_api.access.models",
+  "platform_api.servers.models",
+  "platform_api.agent.models",
+  "platform_api.chat.models",
+  "platform_api.approval.models",
+  "platform_api.tools.models",
+  "platform_api.tools.catalog",
+  "platform_api.tools.rules",
+  "platform_api.tools.masking",
+]
+forbidden_modules = [
+  "fastapi",
+  "starlette",
+  "pydantic",
+  "uvicorn",
+  "sqlalchemy",
+  "alembic",
+  "psycopg",
+  "yaml",
+  "docker",
+  "httpx",
+  "mcp",
+  "asyncssh",
+]
 
 [[tool.importlinter.contracts]]
-name = "Use cases and ports know no web framework and no database library (those belong in adapters)"
+name = "services, schemas and interfaces know no web framework, database library or network client"
 type = "forbidden"
-source_modules = ["platform_api.access.application", "platform_api.access.ports",
-                  "platform_api.agent.application", "platform_api.agent.ports"]
-forbidden_modules = ["fastapi", "starlette", "pydantic", "sqlalchemy", "alembic", "psycopg", "yaml", "docker"]
+source_modules = [
+  "platform_api.access.service",
+  "platform_api.access.schemas",
+  "platform_api.access.interfaces",
+  "platform_api.servers.service",
+  "platform_api.servers.schemas",
+  "platform_api.servers.interfaces",
+  "platform_api.agent.service",
+  "platform_api.agent.schemas",
+  "platform_api.agent.interfaces",
+  "platform_api.chat.service",
+  "platform_api.chat.schemas",
+  "platform_api.chat.interfaces",
+  "platform_api.approval.service",
+  "platform_api.approval.schemas",
+  "platform_api.approval.interfaces",
+  "platform_api.tools.service",
+  "platform_api.tools.schemas",
+  "platform_api.tools.interfaces",
+]
+forbidden_modules = [
+  "fastapi",
+  "starlette",
+  "pydantic",
+  "uvicorn",
+  "sqlalchemy",
+  "alembic",
+  "psycopg",
+  "yaml",
+  "docker",
+  "httpx",
+  "mcp",
+  "asyncssh",
+]
 
 [[tool.importlinter.contracts]]
-name = "agent sees access only through access.ports.provided"
-type = "forbidden"
-source_modules = ["platform_api.agent"]
-forbidden_modules = ["platform_api.access.domain", "platform_api.access.application", "platform_api.access.adapters",
-  "platform_api.access.ports.required"]
-
-[[tool.importlinter.contracts]]
-name = "access does not know agent"
+name = "access uses other modules only through: nothing"
 type = "forbidden"
 source_modules = ["platform_api.access"]
-forbidden_modules = ["platform_api.agent"]
+forbidden_modules = [
+  "platform_api.servers",
+  "platform_api.agent",
+  "platform_api.chat",
+  "platform_api.approval",
+  "platform_api.tools",
+]
+
+[[tool.importlinter.contracts]]
+name = "servers uses other modules only through: access.schemas"
+type = "forbidden"
+source_modules = ["platform_api.servers"]
+forbidden_modules = [
+  "platform_api.access.interfaces",
+  "platform_api.access.models",
+  "platform_api.access.repositories",
+  "platform_api.access.router",
+  "platform_api.access.service",
+  "platform_api.agent",
+  "platform_api.chat",
+  "platform_api.approval",
+  "platform_api.tools",
+]
+
+[[tool.importlinter.contracts]]
+name = "agent uses other modules only through: access.schemas"
+type = "forbidden"
+source_modules = ["platform_api.agent"]
+forbidden_modules = [
+  "platform_api.access.interfaces",
+  "platform_api.access.models",
+  "platform_api.access.repositories",
+  "platform_api.access.router",
+  "platform_api.access.service",
+  "platform_api.servers",
+  "platform_api.chat",
+  "platform_api.approval",
+  "platform_api.tools",
+]
+
+[[tool.importlinter.contracts]]
+name = "chat uses other modules only through: access.schemas, agent.schemas"
+type = "forbidden"
+source_modules = ["platform_api.chat"]
+forbidden_modules = [
+  "platform_api.access.interfaces",
+  "platform_api.access.models",
+  "platform_api.access.repositories",
+  "platform_api.access.router",
+  "platform_api.access.service",
+  "platform_api.servers",
+  "platform_api.agent.integrations",
+  "platform_api.agent.interfaces",
+  "platform_api.agent.models",
+  "platform_api.agent.repositories",
+  "platform_api.agent.router",
+  "platform_api.agent.service",
+  "platform_api.approval",
+  "platform_api.tools",
+]
+
+[[tool.importlinter.contracts]]
+name = "approval uses other modules only through: access.schemas, chat.schemas"
+type = "forbidden"
+source_modules = ["platform_api.approval"]
+forbidden_modules = [
+  "platform_api.access.interfaces",
+  "platform_api.access.models",
+  "platform_api.access.repositories",
+  "platform_api.access.router",
+  "platform_api.access.service",
+  "platform_api.servers",
+  "platform_api.agent",
+  "platform_api.chat.interfaces",
+  "platform_api.chat.models",
+  "platform_api.chat.repositories",
+  "platform_api.chat.router",
+  "platform_api.chat.service",
+  "platform_api.tools",
+]
+
+[[tool.importlinter.contracts]]
+name = "tools uses other modules only through: servers.schemas, approval.schemas, agent.schemas"
+type = "forbidden"
+source_modules = ["platform_api.tools"]
+forbidden_modules = [
+  "platform_api.access",
+  "platform_api.servers.integrations",
+  "platform_api.servers.interfaces",
+  "platform_api.servers.models",
+  "platform_api.servers.repositories",
+  "platform_api.servers.router",
+  "platform_api.servers.service",
+  "platform_api.agent.integrations",
+  "platform_api.agent.interfaces",
+  "platform_api.agent.models",
+  "platform_api.agent.repositories",
+  "platform_api.agent.router",
+  "platform_api.agent.service",
+  "platform_api.chat",
+  "platform_api.approval.interfaces",
+  "platform_api.approval.models",
+  "platform_api.approval.repositories",
+  "platform_api.approval.router",
+  "platform_api.approval.service",
+]

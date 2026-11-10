@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from platform_api.access import create_access_module
-from platform_api.access.adapters.http_api import access_router
-from platform_api.access.domain.roles import ROLE_PERMISSIONS, Permission, Role
-from platform_api.access.ports.provided import NotAllowed, RoleChangeRejected
+from platform_api.access.router import access_router
+from platform_api.access.models import ROLE_PERMISSIONS, Permission, Role
+from platform_api.access.schemas import NotAllowed, RoleChangeRejected
 
 CONFIG = Path(__file__).resolve().parents[1] / "config/users.yaml"
 

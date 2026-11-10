@@ -1,6 +1,6 @@
 """Database plumbing for the composition root: SQLAlchemy engine, ORM base class, Alembic migrations.
 
-Each module declares its own ORM models (in its adapters) on `Base`; Alembic sees all of them.
+Each module declares its own ORM models (in its repositories/postgres.py) on `Base`; Alembic sees all of them.
 Migrations live in `migrations/versions/`. New one after changing a model:
 
     uv run alembic revision --autogenerate -m "add column x"     # then read and fix the file

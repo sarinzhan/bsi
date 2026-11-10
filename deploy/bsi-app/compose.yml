@@ -1,4 +1,4 @@
-# superAI production: the bsi-app VM (platform-api, server-tools, web). See deploy/README.md.
+# BSI production: the bsi-app VM (platform-api, web). See deploy/README.md.
 #
 #   export BSI_VERSION=1.4.0                 # image tag built by CI, never "latest"
 #   docker compose -f deploy/bsi-app/compose.yml pull
@@ -10,11 +10,11 @@
 #     API over mutual TLS; this VM never runs AI-written code.
 #
 # Host files (rendered from Vault by the deploy job; owner root, mode 0600 or 0400):
-#   /etc/superai/platform-api.env    SUPERAI_DATABASE_URL, SUPERAI_SERVICE_TOKEN
-#   /etc/superai/server-tools.env    SUPERAI_DATABASE_URL, SUPERAI_SERVICE_TOKEN
-#   /etc/superai/ssh/                id_ed25519 (deploy user key), known_hosts (pinned target host keys)
-#   /etc/superai/docker-tls/         ca.pem, cert.pem, key.pem (client cert for bsi-runner's Docker API)
-#   /etc/superai/tls/                fullchain.pem, privkey.pem (HTTPS certificate)
+#   /etc/bsi/platform-api.env    BSI_DATABASE_URL, ANTHROPIC_API_KEY
+#                                    (no model proxy yet: platform-api passes the key into agent containers)
+#   /etc/bsi/ssh/                id_ed25519 (deploy user key), known_hosts (pinned target host keys)
+#   /etc/bsi/docker-tls/         ca.pem, cert.pem, key.pem (client cert for bsi-runner's Docker API)
+#   /etc/bsi/tls/                fullchain.pem, privkey.pem (HTTPS certificate)
 
 x-hardening: &hardening
   read_only: true
@@ -29,52 +29,41 @@ x-hardening: &hardening
 services:
   platform-api:
     <<: *hardening
-    image: ${REGISTRY:-registry}/superai/platform-api:${BSI_VERSION:?set BSI_VERSION}
-    env_file: [/etc/superai/platform-api.env]
+    image: ${REGISTRY:-registry}/bsi/platform-api:${BSI_VERSION:?set BSI_VERSION}
+    env_file: [/etc/bsi/platform-api.env]
     environment:
-      SUPERAI_MODE: prod
-      SUPERAI_SANDBOX: docker
-      SUPERAI_AGENT_IMAGE: ${REGISTRY:-registry}/superai/agent-runner:${BSI_VERSION}
-      SUPERAI_SANDBOX_NETWORK: superai-agent-sandbox   # created on bsi-runner, see deploy/README.md
+      BSI_MODE: prod
+      BSI_SANDBOX: docker
+      BSI_AGENT_IMAGE: ${REGISTRY:-registry}/bsi/agent-runner:${BSI_VERSION}
+      BSI_SANDBOX_NETWORK: bsi-agent-sandbox   # created on bsi-runner, see deploy/README.md
       # Docker API of bsi-runner, mutual TLS (the docker client library reads these)
       DOCKER_HOST: tcp://${BSI_RUNNER_HOST:?set BSI_RUNNER_HOST}:2376
       DOCKER_TLS_VERIFY: "1"
       DOCKER_CERT_PATH: /run/docker-tls
       # How agent containers on bsi-runner reach this VM
-      SUPERAI_RUN_MCP_URL: http://${BSI_APP_HOST:?set BSI_APP_HOST}:8100/mcp/
-      SUPERAI_RUN_PLATFORM_URL: http://${BSI_APP_HOST}:8000
+      BSI_RUN_MCP_URL: http://${BSI_APP_HOST:?set BSI_APP_HOST}:8000/mcp/
+      BSI_RUN_PLATFORM_URL: http://${BSI_APP_HOST}:8000
+      BSI_MODEL: ${BSI_MODEL:-claude-opus-5-5}
+      # the server tools: real SSH with the platform's key (this process holds it)
+      BSI_SSH_KEY: /run/ssh/id_ed25519
+      BSI_KNOWN_HOSTS: /run/ssh/known_hosts
+      BSI_REGISTRY: ${REGISTRY:-registry}
+      BSI_MCP_ALLOWED_HOSTS: ${BSI_APP_HOST}:*,platform-api:*
     volumes:
-      - /etc/superai/docker-tls:/run/docker-tls:ro
+      - /etc/bsi/docker-tls:/run/docker-tls:ro
+      - /etc/bsi/ssh:/run/ssh:ro  # the only place the SSH key exists
     ports:
-      # private interface only; the firewall lets only bsi-runner in (agent containers: /runner/finish)
+      # private interface only; the firewall lets only bsi-runner in (agent containers: /runner, /mcp)
       - "${BSI_APP_PRIVATE_IP:?set BSI_APP_PRIVATE_IP}:8000:8000"
 
-  server-tools:
-    <<: *hardening
-    image: ${REGISTRY:-registry}/superai/server-tools:${BSI_VERSION:?set BSI_VERSION}
-    env_file: [/etc/superai/server-tools.env]
-    environment:
-      SUPERAI_MODE: prod              # real SSH; approvals and run tokens from platform-api
-      SUPERAI_PLATFORM_URL: http://platform-api:8000
-      SUPERAI_SSH_KEY: /run/ssh/id_ed25519
-      SUPERAI_KNOWN_HOSTS: /run/ssh/known_hosts
-      SUPERAI_REGISTRY: ${REGISTRY:-registry}
-      SUPERAI_MCP_ALLOWED_HOSTS: ${BSI_APP_HOST}:*,server-tools:*
-    volumes:
-      - /etc/superai/ssh:/run/ssh:ro  # the only place the SSH key exists
-    ports:
-      # private interface only; the firewall lets only bsi-runner in (agent containers: /mcp)
-      - "${BSI_APP_PRIVATE_IP}:8100:8100"
-    depends_on:
-      platform-api: {condition: service_healthy}
 
   web:
     <<: *hardening
-    image: ${REGISTRY:-registry}/superai/web:${BSI_VERSION:?set BSI_VERSION}
+    image: ${REGISTRY:-registry}/bsi/web:${BSI_VERSION:?set BSI_VERSION}
     tmpfs: [/tmp, /var/cache/nginx]
     volumes:
       - ./nginx-tls.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/superai/tls:/etc/nginx/tls:ro
+      - /etc/bsi/tls:/etc/nginx/tls:ro
     ports:
       - "443:8443"                    # the only public port
     depends_on:

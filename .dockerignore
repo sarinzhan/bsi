@@ -1,0 +1,9 @@
+# For images built from the repo root (agent-runner). Keep the build context small and secret-free.
+.git
+.env
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/var
+web/dist

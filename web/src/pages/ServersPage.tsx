@@ -36,9 +36,9 @@ export default function ServersPage() {
       <section className="tools-section" aria-labelledby="tools-h">
         <h2 id="tools-h">Agent tools</h2>
         <p className="muted">
-          The agent never gets the SSH key. It calls these tools; the server-tools service checks the arguments, asks the
+          The agent never gets the SSH key. It calls these tools; the platform checks the arguments, asks the
           developer in the chat, runs a fixed command, masks secrets and writes the audit log. Paths are limited to
-          <span className="mono"> /opt/superai/&lt;system&gt;/&lt;env&gt;/</span>.
+          <span className="mono"> /opt/bsi/&lt;system&gt;/&lt;env&gt;/</span>.
         </p>
         {groups.map((g) => (
           <div key={g.kind} className="tools-group">

@@ -1,0 +1,35 @@
+# BSI on ONE server, deployed by hand (git pull + docker compose). Steps: deploy/single-vm/README.md
+#
+# Used on top of the root files. Put this in /opt/bsi/.env so plain "docker compose ..." picks all three:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.agents.yml:deploy/single-vm/compose.yml
+# Paths below are relative to the repo root (the folder of the first file).
+#
+# What changes compared to the local stack:
+#   - HTTPS and login come from the nginx already on the server (nginx-site.conf). It sets X-User-Id from
+#     the login, so a user can not pretend to be someone else. Stopgap until company SSO.
+#   - platform-api: real SSH to your servers, no fixed dev tokens, database password from .env.
+#   - agent containers run on this same server (Docker socket). Simple, but AI runs next to the SSH key;
+#     the two-VM setup in deploy/README.md separates them.
+#
+# Host files (owner root, mode 0600; the folders 0700):
+#   /etc/bsi/ssh/id_ed25519, known_hosts     key for your servers + their pinned host keys
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+
+  platform-api:
+    environment:
+      BSI_DATABASE_URL: postgresql://platform:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD in .env}@postgres:5432/platform
+      BSI_RUN_TTL_S: "1800"
+      BSI_DEV_TOKENS: "off"         # only real run tokens at /mcp/
+      BSI_EXECUTOR: ssh             # real SSH (dev mode would use a fake one)
+      BSI_SSH_KEY: /run/ssh/id_ed25519
+      BSI_KNOWN_HOSTS: /run/ssh/known_hosts
+      BSI_REGISTRY: ${BSI_REGISTRY:-registry}   # docker_run accepts only images from here
+    volumes:
+      - /etc/bsi/ssh:/run/ssh:ro
+
+  # web: unchanged, on 127.0.0.1:8080. The server's own nginx (deploy/single-vm/nginx-site.conf) does
+  # HTTPS + login in front of it.

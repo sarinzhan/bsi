@@ -179,7 +179,7 @@ export interface ToolMessage {
 
 export type ToolAnswer = 'allow_chat' | 'allow_once' | 'deny';
 
-/** A row of the tools table (served by server-tools: GET /api/tools). */
+/** A row of the tools table (GET /api/servers/tools). */
 export interface ServerToolInfo {
   name: string;
   kind: ToolKind;

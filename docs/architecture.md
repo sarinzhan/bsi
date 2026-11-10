@@ -1,118 +1,152 @@
-# superAI backend architecture
+# BSI architecture
 
-Two deployable services. Inside each one: **modules**, one per domain. Every module is
-hexagonal and talks to other modules only through ports.
+Developers ask an AI agent about their servers in a chat. The agent looks at logs, containers and files
+through a fixed set of server tools; a person approves each tool call in the chat, and every call is recorded.
+
+## Processes
 
 ```
-            web (React)
-                │  REST + SSE
-                ▼
-┌──────────────────────────── platform-api (modular monolith) ───────────────────────────┐
-│  chat      agent      approval      project      history      skills                    │
-└─────────────┬──────────────▲───────────────────────────────────────────────────────────┘
-              │ starts runs  │ POST /internal/approvals, POST /internal/runs/resolve
-              ▼              │
-   agent sandbox ── MCP ──► server-tools (separate service, holds the SSH key)
-   (claude -p)               servers      tools      ──SSH──►  Docker servers
+ browser ──HTTPS──► web (nginx + React)  ── /api/* ──►  platform-api  ──SSH──► target servers
+                                                          │  ▲   ▲
+                                         starts one       │  │   │ /runner/*  (run token)
+                                         container/run    ▼  │   │ /mcp/      (run token)
+                                                     agent container (agent-runner)
+                                                     Claude loop, holds only its run token (+ API key*)
+
+ Postgres: database "platform"                               * no model proxy yet
 ```
 
-Why only two services: `server-tools` is split out because it is the **only** process with the
-SSH key and needs its own deploy, network rules and audit. Everything else stays one process
-(a modular monolith). A module can become a service later without changing its code, because it
-already talks only through ports.
+| process | holds | built with |
+|---|---|---|
+| **web** | nothing secret | React, TypeScript, Vite; nginx serves it and forwards `/api` |
+| **platform-api** | DB password, **the SSH key**, Anthropic API key* | Python, FastAPI, SQLAlchemy, Alembic, MCP server, asyncssh |
+| **agent-runner** | its run token (+ API key*) | Python, Anthropic SDK, MCP client. One container per agent run |
+| **Postgres** | all data | Postgres 17, one database, one login |
 
-## Module layout (the same in every module)
+### Why one process (and what it costs)
+
+The server tools used to be a separate service (agent-tools) so the SSH key lived apart from the web API.
+They were merged into platform-api to keep the system simple: no internal HTTP calls, no service token,
+one database. The cost: a security bug anywhere in platform-api can expose the SSH key. Mitigations to add
+before connecting prod servers: short-lived SSH certificates (e.g. Vault SSH engine) instead of a long-lived
+key, and keeping platform-api's dependencies small and patched. The `tools` module still reaches other
+modules only through their `schemas.py`, so it can be split out again by swapping its integrations.
+
+## Inside platform-api: modules and layers
+
+| module | owns |
+|---|---|
+| **access** | users, roles (developer, devops, admin), permissions — see `docs/roles.md` |
+| **servers** | machines, env, systems, the tools the agent may use on each, access history |
+| **agent** | agent runs: run tokens (hash only), containers, deadlines |
+| **chat** | chats, messages, live event stream (SSE) in the web app's `AgentEvent` format |
+| **approval** | approval cards, "allow reads for this chat", who may approve what |
+| **tools** | the 11 server tools: argument rules, fixed commands, SSH, masking, audit log; MCP endpoint `/mcp/` |
+
+Every module has the same layers:
 
 ```
 <module>/
-  domain/          entities, value objects, rules. Pure Python: no frameworks, no I/O
-  ports/
-    provided.py    what the module offers (use case interfaces + plain DTOs)
-    required.py    what it needs (repositories, gateways), as Protocols
-  application/     use cases: implement provided ports, use required ports
-  adapters/
-    inbound/       HTTP routes, MCP server: call provided ports
-    outbound/      SSH, HTTP clients, DB, files: implement required ports
-  __init__.py      create_<module>_module(required ports...) -> provided ports
+  router.py        HTTP routes (MCP for tools): request in -> service -> response out
+  service.py       business logic
+  schemas.py       what the service returns to callers, and its errors (other modules import only this)
+  interfaces.py    what the service needs: repositories, sandbox, SSH...
+  models.py        entities and rules, plain Python
+  repositories/    storage: postgres.py, and memory.py or files.py for running without a database
+  integrations/    everything else outside: Docker, SSH, other modules
+  __init__.py      create_<module>_module(...): builds the module
+main.py            builds all modules and the app;  wiring.py: glue between modules that must not import each other
 ```
 
-Rules (checked by `lint-imports` in CI, see `[tool.importlinter]` in each pyproject):
-1. Layers: `adapters → application → ports → domain`, never upwards.
-2. Domain imports no frameworks (mcp, starlette, fastapi, asyncssh, httpx, yaml, sqlalchemy).
-   Application and ports import no web framework and no database library either: FastAPI routes are
-   inbound adapters, SQLAlchemy repositories are outbound adapters.
-3. Module A sees module B only through `B.ports.provided`. No shared tables, no shared domain classes.
-4. Wiring happens in one place per service: `main.py` (composition root). No DI framework.
-
-## server-tools (done)
-
-| module | provided | required |
-|---|---|---|
-| **servers**: which machines exist, env, systems, the tools the agent may use on each | `ServerCatalog` (read), `ServerSettings.change_allowed_tools / access_history` (write) | `ServerRepository`, `AccessChangeLog` (Postgres; YAML/JSONL without a database), `KnownTools` (wired in `known_tools.py` from the tools catalog) |
-| **tools**: the 11 server tools, argument rules, fixed commands, masking | `CallTool`, `ListTools` | `Targets` (over `ServerCatalog`), `Approvals` (platform-api), `Executor` (SSH), `AuditLog` (Postgres, append-only; JSONL without a database), `RunAuthority` (platform-api) |
-
-Use case `CallTool`: validate → ask the developer → run over SSH → mask + cap → audit → answer.
-No answer in 5 minutes, or platform-api unreachable → **denied** (never allowed by default).
-
-Inbound: MCP at `/mcp` (streamable HTTP; the agent sends `Authorization: Bearer <run token>`),
-and `GET /api/tools` for the web app.
-
-## platform-api (done: access, agent)
-
-| module | owns | provided | required |
-|---|---|---|---|
-| **access** (done) | users, roles (developer, devops, admin), permissions — see `docs/roles.md` | `AccessCheck.can / can_approve_tool / who_can`, `UserAdmin` (Users page) | `UserRepository` (Postgres; users.yaml without a database; SSO later), `RoleChangeLog` (Postgres, append-only) |
-| **chat** | chats, messages, the event stream | `SendMessage`, `GetChat`, `ListChats`, `ChatEvents` (subscribe) | `ChatRepository`, `AgentRuns` (agent.provided) |
-| **agent** (done; events to chat: later) | runs (one container each), run tokens (hash only), deadlines | `Runs.start / cancel / get`, `RunTokens.resolve / finish`, `RunReaper` | `RunRepository` (Postgres; memory without a database), `Sandbox` (Docker; fake in dev), `AccessCheck` (access.provided), `ChatEventSink` (chat.provided, later) |
-| **approval** | pending approvals, "allow for this chat" grants | `RequestApproval` (blocks), `AnswerApproval` | `ApprovalRepository`, `ChatEventSink` (shows the card) |
-| **project** | projects, repos, files the agent changed | `LinkProject`, `GetProject`, `ListProjects` | `ProjectRepository`, `GitLab` |
-| **history** | decision log (ADRs), versions | `RecordDecision`, `ListDecisions` | `AdrStore` (git: `platform/docs/adr/`) |
-| **skills** | skill files and their usage | `ListSkills`, `GetSkill` | `SkillStore` (git) |
-
-The **approval** module asks `access.can_approve_tool(user, kind)` before accepting an answer: reads by
-developer/devops/admin, writes and any command by devops/admin only. It also decides "once per server per chat" for read tools: when a grant exists,
-it answers immediately and still shows a small "auto-approved" line in the chat.
-`server-tools` always asks, so the rule lives in one place.
-
-### Agent runs and their containers
-
 ```
-message ─► agent.start(user, chat, system, env)
-             ├─ access.can(user, "chat.use")?
-             ├─ new run + random token; Postgres keeps sha256(token) only; deadline = now + 30 min
-             └─ Sandbox.start: container superai-<run id>, env SUPERAI_RUN_TOKEN, SUPERAI_MCP_URL, ...
-container ─MCP, Bearer <token>─► server-tools ─POST /internal/runs/resolve─► platform-api
-             → {runId, chatId, system, env, requestedBy}: the token decides system and env, not the agent
-container ─POST /runner/finish (Bearer <token>)─► run ends, token dies, container stopped
-every 60 s: reaper stops containers past their deadline (the token is already dead at the deadline)
+router ──► service ──► interfaces / schemas ──► models
+               ▲
+repositories, integrations implement interfaces
 ```
 
-The container is untrusted (later it runs code the agent wrote), so it holds nothing valuable: only the token.
-`DockerSandbox` runs it as a non-root user, read-only root filesystem, no capabilities, no new privileges,
-CPU/memory/process limits, removed on exit, no Docker socket, no host folders, on the network
-`superai-agent-sandbox`. Create that network with `internal: true` (no internet) and attach only
-server-tools and platform-api to it. Model calls will go through a proxy in platform-api, so the
-Anthropic key never enters the container (next step).
+Rules, checked by `lint-imports` (see `[tool.importlinter]` in `services/platform-api/pyproject.toml`):
+1. Inside a module, imports only go down the layers: a service never imports a router, a repository or an
+   integration; models import nothing else.
+2. Models, services, schemas and interfaces import no framework (FastAPI, SQLAlchemy, Docker, MCP, SSH...).
+3. A module uses another module only through its `schemas.py`:
+   `servers, agent -> access`; `chat -> access, agent`; `approval -> access, chat`;
+   `tools -> servers, approval, agent`. `agent` tells `chat` that a run ended through its `RunListener`
+   interface, connected in `wiring.py`; `servers` learns which tools exist the same way.
 
 ## Data
 
-Each service has its **own** Postgres database and login (`server_tools`, `platform`); neither can read the
-other's. Inside a service, each module owns its tables: its SQLAlchemy ORM models live in the module's
-outbound adapters and never leave them (repositories convert rows to domain objects). Schema changes are
-Alembic migrations in `src/<package>/migrations/versions/`, applied on start (`alembic upgrade head`).
-History tables (`access_changes`, `audit_log`, `role_changes`) are append-only: a trigger rejects
-UPDATE, DELETE and TRUNCATE. `config/*.yaml` seeds an empty database once.
+One Postgres database, `platform`. Each module owns its tables; no foreign keys between modules.
 
-## Contracts between the services
+| module | tables |
+|---|---|
+| access | `users`, `role_changes` (append-only) |
+| servers | `servers` (DB refuses `ssh_exec` on prod), `access_changes` (append-only) |
+| agent | `runs` (token hash only) |
+| chat | `chats`, `chat_messages` (upserted by id), `chat_events` (append-only) |
+| approval | `approvals`, `approval_read_grants` |
+| tools | `audit_log` (append-only: every tool call, who approved it, result) |
+
+Schema changes are Alembic migrations (`src/platform_api/migrations/versions/`), applied on start.
+Append-only tables have a trigger that rejects UPDATE, DELETE and TRUNCATE. `config/users.yaml` and
+`config/servers.yaml` seed an empty database once. Without `BSI_DATABASE_URL` (dev, tests) the modules
+use files and memory instead.
+
+## HTTP surface
+
+| caller | routes | auth |
+|---|---|---|
+| browser | `/api/me`, `/api/users…`, `/api/roles`, `/api/servers…`, `/api/servers/tools`, `/api/chats…`, `GET /api/chats/{id}/events` (SSE), `POST /api/chats/{id}/tool-calls/{call}/answer`, `/api/runs…` | user (dev: `X-User-Id`; prod: company SSO, not built) |
+| agent container | `GET /runner/context`, `POST /runner/events`, `POST /runner/finish`, MCP at `/mcp/` | `Bearer <run token>` |
+
+nginx routes only `/` and `/api/*` from outside; `/runner` and `/mcp` are reached by agent containers on the
+private network.
+
+## One message, end to end
 
 ```
-POST /internal/approvals          (server-tools → platform-api, long request ≤ 5 min)
-  {runId, chatId, tool, kind, server, command, reason} → {allowed, by}
-POST /internal/runs/resolve       (server-tools → platform-api)
-  {token} → {runId, chatId, system, env, requestedBy} | 404
-  (the token goes in the body, never in the URL: URLs end up in access logs)
-header X-Service-Token: <shared secret from Vault>
-
-POST /runner/finish               (agent container → platform-api)
-  {outcome: finished | failed, error?}       header Authorization: Bearer <run token>
+ 1. browser   POST /api/chats/c1/messages "why does orders keep restarting?"
+ 2. chat      user message event -> agent.start
+ 3. agent     checks the user, run + token (hash stored), starts a container: token, MCP URL, model
+ 4. browser   GET /api/chats/c1/events  <- live: user message, status "working", ...
+ 5. runner    GET /runner/context -> system, env, conversation; asks Claude with the 11 tools
+ 6. Claude    "call docker_logs(server=dev-docker-01, service=orders-service)"
+ 7. runner    MCP /mcp/ with its run token
+ 8. tools     token -> run (agent); server + allowed tools (servers); argument rules; fixed command
+              -> approval: card "waiting" in the chat
+ 9. person    clicks "Allow for this chat" (approval checks their role may approve reads)
+10. tools     SSH `docker logs --tail 200 ...`, mask secrets, cap output, audit row -> card "done" + output
+11. runner    gives the logs to Claude -> more tools (each through 8) -> answer: POST /runner/events, /runner/finish
+12. agent     run finished, token dead, container stopped -> chat status "waiting"
 ```
+
+When in doubt the answer is no: a tool not allowed on the server is rejected before anyone is asked; no
+answer in 5 minutes is a denial; a run past its deadline (30 min) loses its token and its container.
+
+## Agent containers
+
+`agent/integrations/docker_sandbox.py` runs each one as a non-root user with a read-only root filesystem, no
+capabilities, no privilege escalation, CPU/memory/process limits, no Docker socket and no host folders,
+removed on exit, on the network `bsi-agent-sandbox` (reaches platform-api only). Dev can run agents as
+local processes instead (`BSI_SANDBOX=process`, no isolation).
+
+**No model proxy yet**: the Anthropic API key is passed into each container and the sandbox network allows
+egress to `api.anthropic.com`. Code the agent runs in its container could read the key. Fine for a pilot with
+read-only tools; add a model proxy in platform-api before the agent writes and runs code.
+
+## Security layers
+
+1. Network: only nginx is public; agent containers reach only platform-api (+ the Anthropic API for now).
+2. Identity: users by role (`access`); agent containers by short-lived run tokens bound to one chat, system
+   and environment.
+3. Per-server allowed tools set by DevOps (`servers`); `ssh_exec` never on prod, in code and in the database.
+4. Fixed commands: the agent only fills in checked, quoted values; paths stay inside `/opt/bsi/<system>/<env>/`.
+5. A person approves: reads once per server per chat, writes and `ssh_exec` every time by devops/admin.
+6. Output: secrets masked, size capped. Records: append-only audit log, access and role history.
+
+Known gaps: SSH key in the main process (see "Why one process"), API key in containers (no model proxy),
+JSON-style secrets not masked yet, no SSO, the app's DB login could drop the append-only triggers.
+
+## Deployment
+
+Local: `docker compose up` (dev mode); `docker-compose.agents.yml` adds real agent containers.
+Production (two VMs): `deploy/README.md`.
