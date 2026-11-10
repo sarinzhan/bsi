@@ -78,7 +78,7 @@ services:
     image: ${BSI_IMAGES:-bsi}/web:${BSI_TAG:-local}
     tmpfs: [/tmp, /var/cache/nginx]
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8080:8088"
     networks: [backend]
     depends_on:
       platform-api: {condition: service_healthy}
