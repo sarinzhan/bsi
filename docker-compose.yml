@@ -50,7 +50,7 @@ services:
   platform-api:
     <<: *hardening
     build: ./services/platform-api
-    image: bsi/platform-api:local
+    image: ${BSI_IMAGES:-bsi}/platform-api:${BSI_TAG:-local}
     environment:
       BSI_MODE: dev
       BSI_DATABASE_URL: postgresql://platform:dev-platform@postgres:5432/platform
@@ -75,7 +75,7 @@ services:
   web:
     <<: *hardening
     build: ./web
-    image: bsi/web:local
+    image: ${BSI_IMAGES:-bsi}/web:${BSI_TAG:-local}
     tmpfs: [/tmp, /var/cache/nginx]
     ports:
       - "127.0.0.1:8080:8080"
@@ -86,7 +86,7 @@ services:
   agent-runner:                       # build only: docker compose --profile build build agent-runner
     profiles: [build]
     build: {context: ., dockerfile: services/agent-runner/Dockerfile}
-    image: bsi/agent-runner:local
+    image: ${BSI_IMAGES:-bsi}/agent-runner:${BSI_TAG:-local}
 
 volumes:
   pgdata:

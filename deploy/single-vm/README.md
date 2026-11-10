@@ -81,11 +81,31 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 If another site on this nginx already listens on 80/443 with the same `server_name`, change the name.
 
-**8. Start**
+**8. Images.** Pick one way:
+
+- **Built on your laptop, pulled from Docker Hub.** Use this when the server can't download Python/npm
+  packages. On the laptop:
+  ```bash
+  docker login
+  deploy/single-vm/push-images.sh <dockerhub-user> v0.1.0    # builds for linux/amd64 and pushes
+  ```
+  Make the 3 repositories **private** on hub.docker.com. On the server, add to `.env`:
+  ```ini
+  BSI_IMAGES=docker.io/<dockerhub-user>
+  BSI_TAG=v0.1.0
+  ```
+  then:
+  ```bash
+  sudo docker login                          # an access token with read-only scope is enough
+  sudo docker compose --profile build pull   # --profile build: pulls agent-runner too
+  ```
+- **Built on the server:** `sudo docker compose --profile build build agent-runner` (it builds the
+  others on `up --build`).
+
+**9. Start**
 ```bash
 cd /opt/bsi
-sudo docker compose --profile build build agent-runner
-sudo docker compose up -d --build
+sudo docker compose up -d --no-build      # with images from Docker Hub; use --build if built on the server
 sudo docker compose ps                  # all "healthy"
 # set the platform DB password (the init script uses a dev one), then restart platform-api:
 sudo docker compose exec postgres psql -U bsi_admin -d postgres \
@@ -94,7 +114,7 @@ sudo docker compose restart platform-api
 ```
 Open `https://<server>/`. The browser asks for a login.
 
-**9. Firewall:** open 443 (and 80 for the redirect) to your users only. 8000, 8080 and 5432 are already
+**10. Firewall:** open 443 (and 80 for the redirect) to your users only. 8000, 8080 and 5432 are already
 bound to 127.0.0.1, so only your nginx reaches them.
 ```bash
 sudo ufw allow OpenSSH && sudo ufw allow from 10.0.0.0/8 to any port 80,443 proto tcp && sudo ufw enable
@@ -102,22 +122,27 @@ sudo ufw allow OpenSSH && sudo ufw allow from 10.0.0.0/8 to any port 80,443 prot
 
 ## Every release
 
-Laptop:
+With images from Docker Hub. Laptop:
 ```bash
-git push
-git tag v0.1.0 && git push --tags      # optional, makes rollback easy
+git commit -am "..." && git tag v0.2.0 && git push && git push --tags
+deploy/single-vm/push-images.sh <dockerhub-user> v0.2.0
 ```
-Server:
+Server (git pull still brings the compose files, nginx config and DB init scripts):
 ```bash
 cd /opt/bsi
 sudo git pull
-sudo docker compose --profile build build agent-runner
-sudo docker compose up -d --build       # migrations run on start
+sudo sed -i 's/^BSI_TAG=.*/BSI_TAG=v0.2.0/' .env
+sudo docker compose --profile build pull
+sudo docker compose up -d --no-build      # migrations run on start
 sudo docker compose logs -f platform-api
 ```
 
-Rollback: `sudo git checkout v0.0.9` and the same two build commands. A rollback does **not** undo
-database migrations, so check `services/platform-api/src/platform_api/migrations/versions/` before you roll back.
+Built on the server instead: `sudo git pull`, `sudo docker compose --profile build build agent-runner`,
+`sudo docker compose up -d --build`.
+
+Rollback: set `BSI_TAG` back to the previous tag (and `sudo git checkout <that tag>`), then pull and
+`up -d --no-build`. A rollback does **not** undo database migrations, so check
+`services/platform-api/src/platform_api/migrations/versions/` before you roll back.
 
 ## Backups (cron, nightly)
 

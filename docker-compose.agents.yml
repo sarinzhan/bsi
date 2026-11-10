@@ -12,7 +12,7 @@ services:
     user: root                        # the Docker socket belongs to root
     environment:
       BSI_SANDBOX: docker
-      BSI_AGENT_IMAGE: bsi/agent-runner:local
+      BSI_AGENT_IMAGE: ${BSI_IMAGES:-bsi}/agent-runner:${BSI_TAG:-local}
       BSI_SANDBOX_NETWORK: bsi-agent-sandbox
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
