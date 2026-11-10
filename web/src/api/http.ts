@@ -23,8 +23,11 @@ function headers(extra?: Record<string, string>): Record<string, string> {
   return { 'X-User-Id': devUser(), ...extra };
 }
 
+/** "/api/..." -> "/bsi/api/..." when the app is served under a base path (BSI_BASE_PATH at build time). */
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(BASE + path, {
     method,
     headers: headers(body === undefined ? undefined : { 'Content-Type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -105,7 +108,7 @@ export const httpApi: PlatformApi = {
     void (async () => {
       try {
         const sent = await call<{ afterSeq: number }>('POST', `/api/chats/${chatId}/messages`, { text });
-        const res = await fetch(`/api/chats/${chatId}/events?after=${sent.afterSeq}`, {
+        const res = await fetch(`${BASE}/api/chats/${chatId}/events?after=${sent.afterSeq}`, {
           headers: headers({ Accept: 'text/event-stream' }),
           signal: abort.signal,
         });

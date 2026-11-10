@@ -31,5 +31,5 @@ services:
     volumes:
       - /etc/bsi/ssh:/run/ssh:ro
 
-  # web: unchanged, on 127.0.0.1:8080. The server's own nginx (deploy/single-vm/nginx-site.conf) does
+  # web: unchanged, on 127.0.0.1:8088. The server's own nginx (deploy/single-vm/nginx-site.conf) does
   # HTTPS + login in front of it.

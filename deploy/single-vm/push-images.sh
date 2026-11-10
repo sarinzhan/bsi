@@ -4,6 +4,7 @@
 #   docker login                                        # once
 #   deploy/single-vm/push-images.sh <dockerhub-user> <tag>
 #   deploy/single-vm/push-images.sh sarinzhan v0.1.0
+#   BSI_BASE_PATH=/bsi/ deploy/single-vm/push-images.sh sarinzhan v0.1.0   # app served under /bsi/
 #
 # Creates <user>/platform-api, <user>/web, <user>/agent-runner. Make these repositories PRIVATE on
 # hub.docker.com: the images contain config/servers.yaml (internal IPs), config/users.yaml and the prompts.

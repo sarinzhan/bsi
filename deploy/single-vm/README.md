@@ -5,7 +5,7 @@ No CI, no registry: the server builds the images from the code it pulled.
 ```
 your laptop ──git push──► GitHub ──git pull──► server
                                                  nginx (already installed): HTTPS :443 + login
-                                                   └─► 127.0.0.1:8080  web container ─► platform-api
+                                                   └─► 127.0.0.1:8088  web container ─► platform-api
                                                  docker compose: postgres, platform-api, web, agent containers
 ```
 
@@ -72,14 +72,22 @@ sudo htpasswd -B  /etc/nginx/bsi.htpasswd aibek
 sudo chown root:www-data /etc/nginx/bsi.htpasswd && sudo chmod 640 /etc/nginx/bsi.htpasswd
 ```
 
-**7. Your nginx.** Edit `server_name` and the certificate paths in `deploy/single-vm/nginx-site.conf`
-(use the certificate your nginx already has, or one from your company CA), then:
+**7. Your nginx.** `deploy/single-vm/nginx-site.conf` has two ways:
+- **A. Under a path of a site you already have** (`https://your-host/bsi/`): paste its two `location`
+  blocks into that site's `server { }`. Build the web image for that path (see "Under a path" below).
+- **B. On its own host name** (`https://bsi.example.internal/`): a separate `server { }` with its own
+  certificate.
+
+Both keep the two lines that matter: `auth_basic` (the login) and `proxy_set_header X-User-Id $remote_user`.
+Without them anyone can act as any user. Then `sudo nginx -t && sudo systemctl reload nginx`.
+
+**Under a path** (way A): the app must know its path when it is built, because it loads `/bsi/assets/...`
+and calls `/bsi/api/...`. Build with:
 ```bash
-sudo cp deploy/single-vm/nginx-site.conf /etc/nginx/sites-available/bsi
-sudo ln -s /etc/nginx/sites-available/bsi /etc/nginx/sites-enabled/bsi
-sudo nginx -t && sudo systemctl reload nginx
+BSI_BASE_PATH=/bsi/ deploy/single-vm/push-images.sh <dockerhub-user> v0.1.2   # laptop
+# or, building on the server: put BSI_BASE_PATH=/bsi/ in .env
 ```
-If another site on this nginx already listens on 80/443 with the same `server_name`, change the name.
+An image built for `/bsi/` only works under `/bsi/`, and one built for `/` only works at `/`.
 
 **8. Images.** Pick one way:
 
@@ -114,7 +122,7 @@ sudo docker compose restart platform-api
 ```
 Open `https://<server>/`. The browser asks for a login.
 
-**10. Firewall:** open 443 (and 80 for the redirect) to your users only. 8000, 8080 and 5432 are already
+**10. Firewall:** open 443 (and 80 for the redirect) to your users only. 8000, 8088 and 5432 are already
 bound to 127.0.0.1, so only your nginx reaches them.
 ```bash
 sudo ufw allow OpenSSH && sudo ufw allow from 10.0.0.0/8 to any port 80,443 proto tcp && sudo ufw enable
@@ -160,5 +168,5 @@ Restore: `docker compose exec -T postgres pg_restore -U bsi_admin -d platform --
   locked down. The two-VM setup in `deploy/README.md` removes this risk.
 - **The Anthropic API key is inside agent containers** (no model proxy yet).
 - The "Viewing as" switcher still shows in the web app, but it does nothing: nginx decides who you are.
-- Anyone with a shell on this server can call `127.0.0.1:8080` directly and set `X-User-Id` themselves.
+- Anyone with a shell on this server can call `127.0.0.1:8088` directly and set `X-User-Id` themselves.
   Only give server logins to people who are admins anyway.

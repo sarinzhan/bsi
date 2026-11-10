@@ -6,7 +6,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN npm run build \
+# where the app is served, e.g. /bsi/ behind a shared nginx. Baked into the build.
+ARG BSI_BASE_PATH=/
+RUN BSI_BASE_PATH="$BSI_BASE_PATH" npm run build \
  && chmod -R a+rX dist nginx   # readable by nginx whatever the file modes were where the image was built
 
 # unprivileged nginx: runs as a non-root user, listens on 8080

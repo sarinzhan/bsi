@@ -19,7 +19,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
           {'\n\n'}
           {error.stack}
         </pre>
-        <a href="/">Back to start</a>
+        <a href={import.meta.env.BASE_URL}>Back to start</a>
       </div>
     );
   }

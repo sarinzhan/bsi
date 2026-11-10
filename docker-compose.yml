@@ -2,7 +2,7 @@
 #
 #   cp .env.example .env              # once; change the values if you like
 #   docker compose up -d --build
-#   open http://localhost:8080        # web app; API docs at http://localhost:8080/docs
+#   open http://localhost:8088        # web app; API docs at http://localhost:8088/docs
 #
 # Production on the bsi-app VM: deploy/bsi-app/compose.yml (images from the registry, secrets from Vault,
 # agent containers on a separate runner VM).
@@ -74,7 +74,10 @@ services:
 
   web:
     <<: *hardening
-    build: ./web
+    build:
+      context: ./web
+      args:
+        BSI_BASE_PATH: ${BSI_BASE_PATH:-/}   # e.g. /bsi/ when a shared nginx serves BSI under /bsi/
     image: ${BSI_IMAGES:-bsi}/web:${BSI_TAG:-local}
     tmpfs: [/tmp, /var/cache/nginx]
     ports:
