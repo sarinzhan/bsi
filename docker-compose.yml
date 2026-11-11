@@ -64,6 +64,7 @@ services:
     image: ${BSI_IMAGES:-bsi}/platform-api:${BSI_TAG:-local}
     environment:
       BSI_MODE: dev
+      BSI_ADMINS: ${BSI_ADMINS:-}               # first admins (user ids, comma-separated); others start without roles
       BSI_DATABASE_URL: postgresql://platform:dev-platform@postgres:5432/platform
       BSI_SANDBOX: fake           # starts no containers; docker-compose.agents.yml switches to real ones
       BSI_RUN_TTL_S: "600"

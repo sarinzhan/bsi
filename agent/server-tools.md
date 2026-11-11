@@ -9,7 +9,7 @@ with its own key, masks secrets and returns the output.
 ## Allowed tools per server
 
 Each server has a **list of allowed tools**, set by a platform admin in the server
-settings (platform-api's servers module; seeded from `services/platform-api/config/servers.yaml`).
+settings (platform-api's servers module; servers are added in the web app).
 Missing or empty list = the agent can do nothing on that server.
 
 Typical lists:

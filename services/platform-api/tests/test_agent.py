@@ -1,6 +1,5 @@
 """Agent runs: one container per run, and the run token that is the container's only credential."""
 
-import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -8,7 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from platform_api.access import create_access_module
+from conftest import make_access
 from platform_api.agent.router import runner_router, runs_router
 from platform_api.agent.integrations.docker_sandbox import DockerSandbox
 from platform_api.agent.integrations.fake_sandbox import FakeSandbox
@@ -17,7 +16,6 @@ from platform_api.agent.service import RunService, RunSettings
 from platform_api.agent.schemas import RunNotAllowed, RunNotFound, RunRejected
 from platform_api.agent.interfaces import SandboxError, SandboxSpec
 
-USERS = Path(__file__).resolve().parents[1] / "config/users.yaml"
 SETTINGS = RunSettings(mcp_url="http://platform-api:8000/mcp/", platform_url="http://platform-api:8000",
                        ttl=timedelta(minutes=30))
 T0 = datetime(2026, 11, 9, 10, 0, tzinfo=timezone.utc)
@@ -33,8 +31,7 @@ class Clock:
 
 @pytest.fixture
 def env(tmp_path):
-    shutil.copy(USERS, tmp_path / "users.yaml")
-    access = create_access_module(tmp_path / "users.yaml", tmp_path / "roles.jsonl")
+    access = make_access()
     repo, sandbox, clock = InMemoryRunRepository(), FakeSandbox(), Clock()
     tokens = iter(f"token-{i}" for i in range(100))
     service = RunService(repo, sandbox, access.check, SETTINGS, clock=clock, new_token=lambda: next(tokens))

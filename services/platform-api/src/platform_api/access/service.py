@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Iterable
 
 from platform_api.access.models import (
     APPROVAL_FOR_TOOL_KIND, ROLE_PERMISSIONS, InvalidUser, Permission, Role, RolesChanged, User,
@@ -11,6 +12,10 @@ from platform_api.access.schemas import (
     AccessCheck, NotAllowed, RoleChange, RoleChangeRejected, UserAdmin, UserNotFound, UserView,
 )
 from platform_api.access.interfaces import RoleChangeLog, UserRepository
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _view(u: User) -> UserView:
@@ -53,6 +58,30 @@ class AccessService(AccessCheck, UserAdmin):
 
     # ---- UserAdmin ----
 
+    def sign_in(self, user_id: str) -> UserView:
+        """The user the login (nginx, later SSO) says this is. Unknown: created now, without roles."""
+        try:
+            return _view(self._find(user_id))
+        except UserNotFound:
+            pass
+        try:
+            user = User(user_id, user_id, frozenset())
+        except InvalidUser as e:
+            raise UserNotFound(str(e)) from e
+        self._users.save(user)
+        self._log.append(RolesChanged(user_id, (), (), "system", "first sign-in", _now()))
+        return _view(user)
+
+    def ensure_admins(self, user_ids: Iterable[str]) -> None:
+        """Bootstrap (BSI_ADMINS): each listed user that does not exist yet becomes an admin.
+        Existing users are left alone, so removing someone's admin role is not undone on restart."""
+        existing = {u.id for u in self._users.all()}
+        for uid in (u.strip() for u in user_ids):
+            if uid and uid not in existing:
+                self._users.save(User(uid, uid, frozenset({Role.ADMIN})))
+                self._log.append(RolesChanged(uid, (Role.ADMIN.value,), (), "system", "BSI_ADMINS", _now()))
+                existing.add(uid)
+
     def me(self, user_id: str) -> UserView:
         return _view(self._find(user_id))
 
@@ -80,7 +109,7 @@ class AccessService(AccessCheck, UserAdmin):
         self._log.append(RolesChanged(
             user_id, tuple(sorted(r.value for r in wanted - user.roles)),
             tuple(sorted(r.value for r in user.roles - wanted)),
-            actor.name, reason, datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            actor.name, reason, _now(),
         ))
         return _view(changed)
 

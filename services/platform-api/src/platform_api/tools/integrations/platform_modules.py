@@ -35,7 +35,7 @@ class ServerCatalogTargets(Targets):
         s = await asyncio.to_thread(self._servers.get, name)
         if s is None:
             raise LookupError(name)
-        return SshAddress(s.host, s.ssh_port, s.ssh_user)
+        return SshAddress(s.host, s.ssh_port, s.ssh_user, s.host_key)
 
 
 class ApprovalCards(Approvals):

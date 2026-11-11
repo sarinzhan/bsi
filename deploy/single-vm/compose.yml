@@ -12,7 +12,7 @@
 #     the two-VM setup in deploy/README.md separates them.
 #
 # Host files (owner root, mode 0600; the folders 0700):
-#   /etc/bsi/ssh/id_ed25519, known_hosts     key for your servers + their pinned host keys
+#   /etc/bsi/ssh/id_ed25519                  the platform's SSH key (host keys are pinned in the database)
 
 services:
   postgres:
@@ -23,6 +23,7 @@ services:
     environment:
       BSI_DATABASE_URL: postgresql://platform:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD in .env}@postgres:5432/platform
       BSI_RUN_TTL_S: "1800"
+      BSI_ADMINS: ${BSI_ADMINS:?set BSI_ADMINS in .env: your login name(s), comma-separated}
       BSI_DEV_TOKENS: "off"         # only real run tokens at /mcp/
       BSI_EXECUTOR: ssh             # real SSH (dev mode would use a fake one)
       BSI_SSH_KEY: /run/ssh/id_ed25519

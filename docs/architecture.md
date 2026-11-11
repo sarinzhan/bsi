@@ -87,9 +87,9 @@ One Postgres database, `platform`. Each module owns its tables; no foreign keys 
 | tools | `audit_log` (append-only: every tool call, who approved it, result) |
 
 Schema changes are Alembic migrations (`src/platform_api/migrations/versions/`), applied on start.
-Append-only tables have a trigger that rejects UPDATE, DELETE and TRUNCATE. `config/users.yaml` and
-`config/servers.yaml` seed an empty database once. Without `BSI_DATABASE_URL` (dev, tests) the modules
-use files and memory instead.
+Append-only tables have a trigger that rejects UPDATE, DELETE and TRUNCATE. There is no example data: the
+first admins come from `BSI_ADMINS`, other users are created on first sign-in without roles, and servers are
+added in the web app with their SSH host key pinned. Only tests run the modules without Postgres (in memory).
 
 ## HTTP surface
 

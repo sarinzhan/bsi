@@ -13,7 +13,7 @@ const groups: { kind: ToolKind; title: string; note: string }[] = [
 
 /** Server settings: the list of tools the agent may use on this server. Platform admins only. */
 export default function ServerSettingsPage() {
-  const { systemId = 'superapp', serverName = '' } = useParams();
+  const { serverName = '' } = useParams();
   const [server, setServer] = useState<Server | null>(null);
   const [tools, setTools] = useState<ServerToolInfo[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -21,6 +21,8 @@ export default function ServerSettingsPage() {
   const [history, setHistory] = useState<AccessChange[]>([]);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const { user } = useCurrentUser();
   const mayEdit = can(user, 'servers.manage');
 
@@ -29,7 +31,7 @@ export default function ServerSettingsPage() {
       const s = all.find((x) => x.name === serverName) ?? null;
       setServer(s);
       if (s) setSelected(new Set(s.allowedTools));
-    });
+    }).finally(() => setLoaded(true));
     api.listServerTools().then(setTools);
     api.listAccessChanges(serverName).then(setHistory);
   }, [serverName]);
@@ -43,10 +45,22 @@ export default function ServerSettingsPage() {
   if (!server) {
     return (
       <div className="page">
-        <p>Server {serverName} not found. <Link to={`/${systemId}/servers`}>Back to servers</Link></p>
+        {loaded ? <p>Server {serverName} not found. <Link to="/servers">Back to servers</Link></p> : <p className="muted">Loading…</p>}
       </div>
     );
   }
+
+  const testConnection = async () => {
+    setChecking(true);
+    try {
+      setServer(await api.checkServer(server.name));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setChecking(false);
+    }
+  };
+  const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
 
   const pick = (names: string[]) => {
     setSelected(new Set(names));
@@ -85,14 +99,39 @@ export default function ServerSettingsPage() {
   return (
     <div className="page settings-page">
       <div>
-        <Link to={`/${systemId}/servers`} className="back-link">← Servers</Link>
+        <Link to="/servers" className="back-link">← Servers</Link>
         <div className="page-head">
           <div>
             <h1 className="mono">{server.name}</h1>
-            <p>{server.host} · {server.env} · {server.runtime} {server.runtimeVersion} · {server.usedFor}</p>
+            <p>{server.sshUser}@{server.host}:{server.sshPort} · {server.env} · {server.systems.join(', ')}</p>
           </div>
         </div>
       </div>
+
+      <section className="card settings-card" aria-labelledby="conn-h">
+        <h2 id="conn-h">Connection</h2>
+        <p className="muted" style={{ margin: 0 }}>
+          Host key <span className="mono">{server.hostKeyFingerprint ?? 'none: SSH to this server is refused'}</span>
+        </p>
+        {server.checkedAt ? (
+          server.checkError ? (
+            <p className="form-error">Last check {new Date(server.checkedAt).toLocaleString()}: {server.checkError}</p>
+          ) : (
+            <p style={{ margin: 0 }}>
+              Last check {new Date(server.checkedAt).toLocaleString()}: Docker {server.dockerVersion}
+              {server.memoryTotalBytes != null && server.memoryUsedBytes != null &&
+                ` · memory ${gb(server.memoryUsedBytes)} of ${gb(server.memoryTotalBytes)} GB used`}
+            </p>
+          )
+        ) : (
+          <p className="muted" style={{ margin: 0 }}>Not checked yet.</p>
+        )}
+        <div>
+          <button type="button" className="btn" onClick={() => void testConnection()} disabled={!mayEdit || checking}>
+            {checking ? 'Connecting…' : 'Test connection'}
+          </button>
+        </div>
+      </section>
 
       <form className="card settings-card" onSubmit={save}>
         <fieldset disabled={!mayEdit}>
@@ -154,7 +193,7 @@ export default function ServerSettingsPage() {
           <button type="submit" className="btn primary" disabled={!changed || !reason.trim()}>Save</button>
           {saved && !changed && <span className="saved" role="status">Saved</span>}
           <span className="muted" style={{ fontSize: 12 }}>
-            {selected.size} of {tools.length} tools · DevOps and admins · written to servers.yaml
+            {selected.size} of {tools.length} tools · DevOps and admins · every change is logged below
           </span>
         </div>
       </form>

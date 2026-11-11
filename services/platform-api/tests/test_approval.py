@@ -1,7 +1,6 @@
 """Approval module: a person decides before a server tool runs. Nothing is allowed by default."""
 
 import asyncio
-import shutil
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from platform_api.access import create_access_module
+from conftest import make_access
 from platform_api.agent import create_agent_module
 from platform_api.agent.integrations.fake_sandbox import FakeSandbox
 from platform_api.agent.service import RunSettings
@@ -21,13 +20,11 @@ from platform_api.approval.schemas import (
 )
 from platform_api.chat import create_chat_module
 
-USERS = Path(__file__).resolve().parents[1] / "config/users.yaml"
 
 
 class World:
     def __init__(self, tmp_path, timeout=timedelta(seconds=5)):
-        shutil.copy(USERS, tmp_path / "users.yaml")
-        self.access = create_access_module(tmp_path / "users.yaml", tmp_path / "roles.jsonl")
+        self.access = make_access()
         agent = create_agent_module(self.access.check, FakeSandbox(),
                                     RunSettings(mcp_url="http://x/mcp/", platform_url="http://y"))
         self.chat = create_chat_module(agent.runs, self.access.check)

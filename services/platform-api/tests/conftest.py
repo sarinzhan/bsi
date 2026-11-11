@@ -9,8 +9,10 @@ Without the variable, Postgres tests are skipped.
 
 import os
 import uuid
+from pathlib import Path
 
 import pytest
+import yaml
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
@@ -44,3 +46,31 @@ def pg():
         with admin.connect() as conn:
             conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
         admin.dispose()
+
+
+# ---- test data (the platform itself has none: users sign in, servers are added in the web app) ----
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def sample_users():
+    """sarinzha (developer), aibek (devops), timur (developer + devops), dana (admin)."""
+    from platform_api.access.models import Role, User
+
+    raw = yaml.safe_load((FIXTURES / "users.yaml").read_text())["users"]
+    return [User(uid, u["name"], frozenset(Role(r) for r in u["roles"])) for uid, u in raw.items()]
+
+
+def sample_servers():
+    """dev-docker-01 (superapp), dev-docker-02 (tiffany), stage-docker-01, prod-docker-01."""
+    from platform_api.servers.models import Env, Server
+
+    raw = yaml.safe_load((FIXTURES / "servers.yaml").read_text())["servers"]
+    return [Server(name, s["host"], Env(s["env"]), frozenset(s.get("allowed_tools") or []),
+                   frozenset(s.get("systems") or [])) for name, s in raw.items()]
+
+
+def make_access(engine=None, admins=()):
+    from platform_api.access import create_access_module
+
+    return create_access_module(engine, admins=admins, users=sample_users())

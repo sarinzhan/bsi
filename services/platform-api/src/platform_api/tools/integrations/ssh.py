@@ -11,14 +11,22 @@ from platform_api.tools.interfaces import Executor, SshAddress
 
 
 class SshExecutor(Executor):
-    def __init__(self, key_path: Path, known_hosts: Path) -> None:
+    def __init__(self, key_path: Path, known_hosts: Path | None = None) -> None:
         self._key = str(key_path)
-        self._known_hosts = str(known_hosts)  # host keys are pinned: no "accept any host"
+        # Host keys are always pinned, never "accept any host": the key saved with the server (added in the
+        # web app), else this known_hosts file. Neither: the call is refused.
+        self._known_hosts = str(known_hosts) if known_hosts is not None and known_hosts.exists() else None
 
     async def run(self, address: SshAddress, command: Command) -> ExecResult:
+        if address.host_key:
+            known_hosts: object = ([asyncssh.import_public_key(address.host_key)], [], [])
+        elif self._known_hosts:
+            known_hosts = self._known_hosts
+        else:
+            raise RuntimeError(f"{address.host}: no pinned host key; add the server in the web app")
         async with asyncssh.connect(
             address.host, port=address.port, username=address.user,
-            client_keys=[self._key], known_hosts=self._known_hosts, connect_timeout=10,
+            client_keys=[self._key], known_hosts=known_hosts, connect_timeout=10,
         ) as conn:
             result = await conn.run(command.script, input=command.stdin, encoding=None,
                                     check=False, timeout=command.timeout_s)

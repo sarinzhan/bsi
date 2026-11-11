@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
-from platform_api.access.repositories.files import JsonlRoleChangeLog, YamlUserRepository
-from platform_api.access.service import AccessService
-from platform_api.access.models import RolesChanged
-from platform_api.access.schemas import AccessCheck, UserAdmin
 from platform_api.access.interfaces import RoleChangeLog, UserRepository
+from platform_api.access.models import User
+from platform_api.access.repositories.memory import InMemoryRoleChangeLog, InMemoryUserRepository
+from platform_api.access.schemas import AccessCheck, UserAdmin
+from platform_api.access.service import AccessService
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -20,31 +18,24 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class AccessModule:
     check: AccessCheck  # for other modules: can(user, permission)
-    admin: UserAdmin  # for the Users page
+    admin: UserAdmin  # for the Users page and sign-in
 
 
-def create_access_module(users_file: Path, role_log: Path, engine: "Engine | None" = None) -> AccessModule:
-    """engine given: users and role changes live in Postgres; users_file seeds an empty database.
-    No engine: users.yaml is the store and role changes go to a JSONL file (tests, quick local runs).
+def create_access_module(engine: "Engine | None" = None, admins: Iterable[str] = (),
+                         users: Iterable[User] = ()) -> AccessModule:
+    """engine: users and role changes in Postgres (the platform). No engine: in memory, for tests (`users`).
+
+    admins: user ids that become admins if they do not exist yet (BSI_ADMINS): how the first admin gets in.
+    Everyone else is created on first sign-in without roles, until an admin gives them one.
     """
-    users: UserRepository
+    repo: UserRepository
     log: RoleChangeLog
     if engine is None:
-        users, log = YamlUserRepository(users_file), JsonlRoleChangeLog(role_log)
+        repo, log = InMemoryUserRepository(users), InMemoryRoleChangeLog()
     else:
         from platform_api.access.repositories.postgres import PostgresRoleChangeLog, PostgresUserRepository
 
-        users, log = PostgresUserRepository(engine), PostgresRoleChangeLog(engine)
-        if users.is_empty() and users_file.exists():
-            _seed(users, log, YamlUserRepository(users_file), users_file.name)
-    service = AccessService(users, log)
+        repo, log = PostgresUserRepository(engine), PostgresRoleChangeLog(engine)
+    service = AccessService(repo, log)
+    service.ensure_admins(admins)
     return AccessModule(check=service, admin=service)
-
-
-def _seed(target: UserRepository, log: RoleChangeLog, source: UserRepository, file: str) -> None:
-    """First start on an empty database: import the YAML file, and log it like any other role change."""
-    at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    for user in source.all():
-        target.save(user)
-        log.append(RolesChanged(user.id, tuple(sorted(r.value for r in user.roles)), (), "system",
-                                f"imported from {file}", at))

@@ -36,9 +36,9 @@ def access_router(admin: UserAdmin, current_user: Callable[[Request], str | None
         if not uid:
             raise HTTPException(401, "not signed in")
         try:
-            admin.me(uid)
-        except UserNotFound:
-            raise HTTPException(401, "unknown user") from None
+            admin.sign_in(uid)  # first visit: the user is created, without roles
+        except UserNotFound as e:
+            raise HTTPException(401, f"cannot sign in: {e}") from None
         return uid
 
     @router.get("/me")

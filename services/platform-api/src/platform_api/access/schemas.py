@@ -51,6 +51,8 @@ class AccessCheck(Protocol):
 class UserAdmin(Protocol):
     """Used by the Users page."""
 
+    def sign_in(self, user_id: str) -> UserView: ...  # unknown user: created without roles
+
     def me(self, user_id: str) -> UserView: ...
 
     def list_users(self) -> list[UserView]: ...

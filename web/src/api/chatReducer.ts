@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentMessage, Chat, Project } from './types';
+import type { AgentEvent, AgentMessage, Chat } from './types';
 
 /** Applies a streamed event to the chat itself (messages, steps, status, linked projects). */
 export function applyToChat(chat: Chat, event: AgentEvent): Chat {
@@ -26,21 +26,6 @@ export function applyToChat(chat: Chat, event: AgentEvent): Chat {
       return { ...chat, status: event.status };
     default:
       return chat;
-  }
-}
-
-/** Applies a streamed event to the projects the chat works in. */
-export function applyToProjects(projects: Record<string, Project>, event: AgentEvent): Record<string, Project> {
-  switch (event.type) {
-    case 'project':
-      return { ...projects, [event.project.id]: event.project };
-    case 'file': {
-      const p = projects[event.projectId];
-      if (!p) return projects;
-      return { ...projects, [p.id]: { ...p, files: [...p.files.filter((f) => f.path !== event.file.path), event.file] } };
-    }
-    default:
-      return projects;
   }
 }
 

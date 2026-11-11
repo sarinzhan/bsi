@@ -22,6 +22,7 @@ class SshAddress:
     host: str
     port: int
     user: str
+    host_key: str | None = None  # pinned key from the servers module; SSH trusts only this one
 
 
 @dataclass(frozen=True)

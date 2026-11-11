@@ -63,6 +63,8 @@ class InvalidUser(ValueError):
 
 @dataclass(frozen=True)
 class User:
+    """No roles = signed in, but may do nothing until an admin gives a role."""
+
     id: str
     name: str
     roles: frozenset[Role]
@@ -70,8 +72,6 @@ class User:
     def __post_init__(self) -> None:
         if not _ID.match(self.id):
             raise InvalidUser(f"bad user id {self.id!r}")
-        if not self.roles:
-            raise InvalidUser(f"{self.id}: a user needs at least one role (remove the user instead)")
 
     @property
     def permissions(self) -> frozenset[Permission]:

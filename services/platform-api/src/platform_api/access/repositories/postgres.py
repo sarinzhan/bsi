@@ -21,9 +21,8 @@ class UserRow(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("id ~ '^[a-z][a-z0-9._-]{1,40}$'", name="id_format"),
-        # every user keeps at least one role, and only known roles
-        CheckConstraint("cardinality(roles) >= 1 AND roles <@ ARRAY['developer', 'devops', 'admin']",
-                        name="roles_valid"),
+        # only known roles; none = signed in, waiting for an admin to give a role
+        CheckConstraint("roles <@ ARRAY['developer', 'devops', 'admin']", name="roles_valid"),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -61,9 +60,6 @@ class PostgresUserRepository(UserRepository):
         with Session(self._engine) as session, session.begin():
             session.merge(UserRow(id=user.id, name=user.name, roles=sorted(r.value for r in user.roles)))
 
-    def is_empty(self) -> bool:
-        with Session(self._engine) as session:
-            return session.scalar(select(UserRow.id).limit(1)) is None
 
 
 class PostgresRoleChangeLog(RoleChangeLog):

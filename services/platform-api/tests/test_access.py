@@ -1,25 +1,19 @@
 """Roles: developer, devops, admin. Combined roles are a union. Admin = developer + devops + users/skills."""
 
-import shutil
-from pathlib import Path
-
 import pytest
-import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from conftest import make_access
 from platform_api.access import create_access_module
 from platform_api.access.router import access_router
 from platform_api.access.models import ROLE_PERMISSIONS, Permission, Role
-from platform_api.access.schemas import NotAllowed, RoleChangeRejected
-
-CONFIG = Path(__file__).resolve().parents[1] / "config/users.yaml"
+from platform_api.access.schemas import NotAllowed, RoleChangeRejected, UserNotFound
 
 
 @pytest.fixture
-def access(tmp_path):
-    shutil.copy(CONFIG, tmp_path / "users.yaml")
-    return create_access_module(tmp_path / "users.yaml", tmp_path / "roles.jsonl"), tmp_path
+def access():
+    return make_access(), None
 
 
 def test_admin_has_everything_developer_and_devops_have():
@@ -53,15 +47,13 @@ def test_only_admins_change_roles_and_it_is_saved_and_logged(access):
         module.admin.set_roles("aibek", "sarinzha", ["developer", "devops"], "on call this month")
     view = module.admin.set_roles("dana", "sarinzha", ["developer", "devops"], "on call this month")
     assert view.roles == ("developer", "devops") and "deploy.approve" in view.permissions
-    assert yaml.safe_load((d / "users.yaml").read_text())["users"]["sarinzha"]["roles"] == ["developer", "devops"]
+    assert module.admin.me("sarinzha").roles == ("developer", "devops")
     [change] = module.admin.role_history("sarinzha")
     assert change.added == ("devops",) and change.removed == () and change.by == "Dana M."
 
 
-def test_rules_no_roles_unknown_role_last_admin_reason(access):
+def test_rules_unknown_role_last_admin_reason(access):
     admin = access[0].admin
-    with pytest.raises(RoleChangeRejected, match="at least one role"):
-        admin.set_roles("dana", "sarinzha", [], "x")
     with pytest.raises(RoleChangeRejected, match="unknown role"):
         admin.set_roles("dana", "sarinzha", ["root"], "x")
     with pytest.raises(RoleChangeRejected, match="last admin"):
@@ -81,3 +73,44 @@ def test_http(access):
     assert c.put("/api/users/aibek/roles", json=body, headers={"X-User-Id": "sarinzha"}).status_code == 403
     assert c.put("/api/users/aibek/roles", json=body, headers={"X-User-Id": "dana"}).status_code == 200
     assert set(c.get("/api/roles").json()) == {"developer", "devops", "admin"}
+
+
+def test_first_sign_in_creates_the_user_without_roles():
+    module = create_access_module()
+    view = module.admin.sign_in("newdev")
+    assert view.roles == () and view.permissions == () and view.name == "newdev"
+    assert not module.check.can("newdev", "chat.use")  # nothing until an admin gives a role
+    [event] = module.admin.role_history("newdev")
+    assert event.by == "system" and event.reason == "first sign-in"
+    assert module.admin.sign_in("newdev").roles == ()  # second visit: the same user, nothing logged
+    assert len(module.admin.role_history("newdev")) == 1
+    with pytest.raises(UserNotFound):
+        module.admin.sign_in("Not A Valid Id")
+
+
+def test_bsi_admins_bootstrap_only_creates_missing_users():
+    module = create_access_module(admins=["boss", " ", "boss"])
+    assert module.admin.me("boss").roles == ("admin",)
+    module.admin.sign_in("second")
+    module.admin.set_roles("boss", "second", ["admin"], "second admin")
+    module.admin.set_roles("second", "boss", ["developer"], "steps down")
+    module.check  # a restart with the same BSI_ADMINS must not make boss admin again:
+    from platform_api.access.service import AccessService
+    service = module.admin
+    assert isinstance(service, AccessService)
+    service.ensure_admins(["boss"])
+    assert module.admin.me("boss").roles == ("developer",)
+
+
+def test_an_admin_can_take_all_roles_away(access):
+    admin = access[0].admin
+    assert admin.set_roles("dana", "sarinzha", [], "left the team").roles == ()
+
+
+def test_http_signs_in_new_users(access):
+    module, _ = access
+    app = FastAPI()
+    app.include_router(access_router(module.admin, lambda r: r.headers.get("x-user-id")))
+    c = TestClient(app)
+    assert c.get("/api/me", headers={"X-User-Id": "newdev"}).json()["roles"] == []
+    assert c.get("/api/me", headers={"X-User-Id": "Bad Id"}).status_code == 401

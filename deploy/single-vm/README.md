@@ -40,9 +40,9 @@ EOF
 sudo git clone git@github.com:<you>/bsi.git /opt/bsi
 ```
 
-**3. Users and servers, before the first start.** `config/users.yaml` and `config/servers.yaml`
-fill an empty database **once**. Afterwards change them in the web app. Put your real people and
-servers there, commit, push, and `git pull` on the server.
+**3. Nothing to prepare for users and servers.** The database starts empty. `BSI_ADMINS` (step 4) names
+the first admin(s). Everyone else is created when they first log in, with no role until an admin gives one.
+Servers are added in the web app (Servers → Add server).
 
 **4. Secrets** (never in git)
 ```bash
@@ -51,7 +51,8 @@ sudo tee .env >/dev/null <<EOF
 COMPOSE_FILE=docker-compose.yml:docker-compose.agents.yml:deploy/single-vm/compose.yml
 POSTGRES_ADMIN_PASSWORD=$(openssl rand -hex 24)
 PLATFORM_DB_PASSWORD=$(openssl rand -hex 24)
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=sk-ant-api03-...
+BSI_ADMINS=sarinzha                 # your login name(s), comma-separated: the first admins
 EOF
 sudo chmod 600 .env
 ```
@@ -60,15 +61,17 @@ sudo chmod 600 .env
 ```bash
 sudo mkdir -p -m 700 /etc/bsi/ssh
 sudo ssh-keygen -t ed25519 -N "" -C BSI -f /etc/bsi/ssh/id_ed25519
-# on each target server: add id_ed25519.pub to ~/.ssh/authorized_keys of the user the platform logs in as
-sudo sh -c 'ssh-keyscan -t ed25519 10.20.1.11 10.20.1.12 > /etc/bsi/ssh/known_hosts'   # your servers
 ```
+The web app shows this public key when you add a server, and you put it in that server's
+`~/.ssh/authorized_keys`. It also fetches the server's host key, shows its fingerprint for you to compare, and
+pins it in the database. You don't edit a `known_hosts` file.
 (platform-api runs as root here because it uses the Docker socket, so root-owned files are fine.)
 
-**6. Logins.** The user name must be the user's id in `config/users.yaml`.
+**6. Logins.** The login name becomes the user id in BSI (lowercase letters, digits, `.`, `_`, `-`).
+Your own login must match `BSI_ADMINS`.
 ```bash
 sudo htpasswd -cB /etc/nginx/bsi.htpasswd sarinzha     # -c only for the first user
-sudo htpasswd -B  /etc/nginx/bsi.htpasswd aibek
+sudo htpasswd -B  /etc/nginx/bsi.htpasswd aibek          # gets no role until an admin gives one
 sudo chown root:www-data /etc/nginx/bsi.htpasswd && sudo chmod 640 /etc/nginx/bsi.htpasswd
 ```
 

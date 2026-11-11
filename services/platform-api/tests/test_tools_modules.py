@@ -1,12 +1,11 @@
 """The tools module wired to the real servers, agent, chat and approval modules (in-process, no HTTP)."""
 
 import asyncio
-import shutil
 from pathlib import Path
 
 import pytest
 
-from platform_api.access import create_access_module
+from conftest import make_access, sample_servers
 from platform_api.agent import create_agent_module
 from platform_api.agent.integrations.fake_sandbox import FakeSandbox
 from platform_api.agent.service import RunSettings
@@ -19,7 +18,6 @@ from platform_api.tools.integrations.fake_ssh import FakeExecutor
 from platform_api.tools.integrations.platform_modules import ApprovalCards, RunTokenAuthority, ServerCatalogTargets
 from platform_api.wiring import ChatRunListener, ToolCatalog
 
-CONFIG = Path(__file__).resolve().parents[1] / "config"
 
 
 class Audit:
@@ -34,11 +32,9 @@ class Platform:
     """Everything main.py wires, minus HTTP."""
 
     def __init__(self, d: Path):
-        for name in ("users.yaml", "servers.yaml"):
-            shutil.copy(CONFIG / name, d / name)
-        self.access = create_access_module(d / "users.yaml", d / "roles.jsonl")
+        self.access = make_access()
         catalog = ToolCatalog()
-        self.servers = create_servers_module(d / "servers.yaml", d / "access.jsonl", catalog, self.access.check)
+        self.servers = create_servers_module(catalog, self.access.check, servers=sample_servers())
         self.sandbox = FakeSandbox()
         listener = ChatRunListener()
         self.agent = create_agent_module(self.access.check, self.sandbox,

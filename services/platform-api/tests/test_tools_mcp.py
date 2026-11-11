@@ -1,4 +1,4 @@
-"""How agent containers reach the MCP endpoint of platform-api (/mcp/)."""
+"""How agent containers reach the MCP endpoint of platform-api (/mcp/). Builds the real app: needs Postgres."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +7,11 @@ from platform_api.main import build_app
 
 MCP_HEADERS = {"Authorization": "Bearer dev-superapp-dev", "Accept": "application/json, text/event-stream"}
 LIST_TOOLS = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+
+@pytest.fixture(autouse=True)
+def database(pg, monkeypatch):
+    monkeypatch.setenv("BSI_DATABASE_URL", pg[1])
 
 
 @pytest.mark.parametrize("base_url, status", [

@@ -1,5 +1,4 @@
-# Test fixture: a copy of config/servers.yaml for tests of the tools service alone (StaticTargets).
-# In the app, servers come from the servers module.
+# Test fixture: servers for the tests (the platform itself has none until they are added in the web app).
 servers:
   dev-docker-01:
     host: 10.20.1.11

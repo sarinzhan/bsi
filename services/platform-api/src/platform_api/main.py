@@ -1,6 +1,7 @@
 """Composition root of platform-api. Modules: access, servers, agent, chat, approval, tools. Next: project, history.
 
-Run:  uv run uvicorn platform_api.main:app --port 8000      (API docs: http://localhost:8000/docs)
+Run:  BSI_DATABASE_URL=postgresql://... uv run uvicorn --factory platform_api.main:build_app --port 8000
+      (API docs: http://localhost:8000/docs)
 
 One process: the web API, the agent runs, and the server tools the agents call over MCP (/mcp/).
 This process holds the SSH key (BSI_SSH_KEY). See docs/architecture.md, "Why one process".
@@ -30,10 +31,11 @@ from platform_api.approval.router import approvals_router
 from platform_api.chat import create_chat_module
 from platform_api.chat.router import chats_router, runner_chat_router
 from platform_api.servers import create_servers_module
+from platform_api.servers.integrations.fake_probe import FakeHostProbe
+from platform_api.servers.interfaces import HostProbe
 from platform_api.servers.router import servers_router
 from platform_api.tools import create_tools_module
 from platform_api.tools.router import create_mcp_server
-from platform_api.tools.repositories.files import JsonlAuditLog
 from platform_api.tools.repositories.postgres import PostgresAuditLog
 from platform_api.tools.integrations.dev_doubles import (
     AnswerAllApprovals, FirstMatchRunAuthority, StaticRunAuthority,
@@ -55,30 +57,28 @@ def build_app() -> FastAPI:
     if not logging.getLogger().handlers:  # our INFO lines (runs started/ended) in docker compose logs
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    # Postgres when BSI_DATABASE_URL is set (required in prod); otherwise YAML/JSONL files and memory.
+    # Everything lives in Postgres. No example data: servers are added in the web app, users are created on
+    # first sign-in, and BSI_ADMINS names the first admins (comma-separated user ids).
     database_url = env("BSI_DATABASE_URL")
-    if mode == "prod" and not database_url:
-        raise RuntimeError("BSI_DATABASE_URL is required in prod")
-    engine = None
-    if database_url:
-        from platform_api.db import make_engine, migrate
+    if not database_url:
+        raise RuntimeError("BSI_DATABASE_URL is required (postgresql://user:password@host:5432/platform)")
+    from platform_api.db import make_engine, migrate
 
-        migrate(database_url)  # alembic upgrade head
-        engine = make_engine(database_url)
+    migrate(database_url)  # alembic upgrade head
+    engine = make_engine(database_url)
+    real_ssh = mode == "prod" or env("BSI_EXECUTOR") == "ssh"  # dev: no SSH at all unless asked for
 
-    access = create_access_module(
-        Path(env("BSI_USERS_FILE", str(HERE / "config/users.yaml"))),  # seeds an empty database
-        Path(env("BSI_ROLE_LOG", str(HERE / "var/role-changes.jsonl"))),
-        engine,
-    )
+    admins = [a.strip() for a in env("BSI_ADMINS", "").split(",") if a.strip()]
+    access = create_access_module(engine, admins=admins)
     tool_catalog = ToolCatalog()  # which tools exist: answered by the tools module, created below
-    servers = create_servers_module(
-        Path(env("BSI_SERVERS_FILE", str(HERE / "config/servers.yaml"))),  # seeds an empty database
-        Path(env("BSI_ACCESS_LOG", str(HERE / "var/access-changes.jsonl"))),
-        tool_catalog,
-        access.check,
-        engine,
-    )
+    probe: HostProbe
+    if real_ssh:
+        from platform_api.servers.integrations.ssh_probe import SshHostProbe
+
+        probe = SshHostProbe(Path(os.environ["BSI_SSH_KEY"]))
+    else:
+        probe = FakeHostProbe()
+    servers = create_servers_module(tool_catalog, access.check, engine, probe)
 
     # Agent runs: Docker containers in prod; in dev a fake that starts nothing (default), or local processes.
     sandbox: Sandbox
@@ -106,9 +106,9 @@ def build_app() -> FastAPI:
     if env("BSI_AGENT_HTTPS_PROXY"):
         run_env["HTTPS_PROXY"] = os.environ["BSI_AGENT_HTTPS_PROXY"]
         run_env["NO_PROXY"] = "platform-api,localhost,127.0.0.1"
-    log.info("BSI platform-api: mode=%s database=%s sandbox=%s agent image=%s executor=%s approvals=%s proxy=%s",
-             mode, "postgres" if database_url else "files", sandbox_kind, env("BSI_AGENT_IMAGE", "-"),
-             "ssh" if (mode == "prod" or env("BSI_EXECUTOR") == "ssh") else "FAKE",
+    log.info("BSI platform-api: mode=%s admins=%s sandbox=%s agent image=%s ssh=%s approvals=%s proxy=%s",
+             mode, ",".join(admins) or "-", sandbox_kind, env("BSI_AGENT_IMAGE", "-"),
+             "real" if real_ssh else "FAKE",
              env("BSI_APPROVALS", "cards"), env("BSI_AGENT_HTTPS_PROXY") or "none")
     listener = ChatRunListener()
     agent = create_agent_module(access.check, sandbox, RunSettings(
@@ -123,10 +123,12 @@ def build_app() -> FastAPI:
 
     # ---- tools: the server tools agents call over MCP ----
     executor: Executor
-    if mode == "prod" or env("BSI_EXECUTOR") == "ssh":  # dev can try one real server with BSI_EXECUTOR=ssh
+    if real_ssh:
         from platform_api.tools.integrations.ssh import SshExecutor
 
-        executor = SshExecutor(Path(os.environ["BSI_SSH_KEY"]), Path(os.environ["BSI_KNOWN_HOSTS"]))
+        # host keys: pinned per server in the database; BSI_KNOWN_HOSTS only as a fallback for old servers
+        known_hosts = env("BSI_KNOWN_HOSTS")
+        executor = SshExecutor(Path(os.environ["BSI_SSH_KEY"]), Path(known_hosts) if known_hosts else None)
     else:
         executor = FakeExecutor()
     approvals: Approvals = ApprovalCards(approval.tools)  # cards in the chat
@@ -136,8 +138,7 @@ def build_app() -> FastAPI:
     if mode != "prod" and env("BSI_DEV_TOKENS", "on") == "on":
         # dev: also fixed tokens "dev-<system>-<env>", to try the tools from your own MCP client
         authority = FirstMatchRunAuthority(StaticRunAuthority(), authority)
-    audit: AuditLog = (PostgresAuditLog(engine) if engine is not None
-                       else JsonlAuditLog(Path(env("BSI_AUDIT_FILE", str(HERE / "var/audit.jsonl")))))
+    audit: AuditLog = PostgresAuditLog(engine)
     tools = create_tools_module(ServerCatalogTargets(servers.catalog), approvals, executor, audit,
                                 ImagePolicy(registry=env("BSI_REGISTRY", "registry")))
     tool_catalog.list_tools = tools.list_tools
@@ -173,8 +174,7 @@ def build_app() -> FastAPI:
                 yield
         finally:
             reaper.cancel()
-            if engine is not None:
-                engine.dispose()
+            engine.dispose()
 
     app = FastAPI(title="BSI platform-api", lifespan=lifespan)
 
@@ -183,7 +183,7 @@ def build_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(access_router(access.admin, current_user))
-    app.include_router(servers_router(servers.catalog, servers.settings, current_user))
+    app.include_router(servers_router(servers.catalog, servers.settings, servers.admin, current_user))
     app.include_router(runs_router(agent.runs, current_user))
     app.include_router(chats_router(chat.chats, current_user))
     app.include_router(approvals_router(approval.answers, current_user))
@@ -192,6 +192,3 @@ def build_app() -> FastAPI:
     app.include_router(runner_router(agent.tokens))
     app.mount("/mcp", mcp_app)
     return app
-
-
-app = build_app()

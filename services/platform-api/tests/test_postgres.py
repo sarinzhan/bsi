@@ -1,4 +1,4 @@
-"""Users and role changes in Postgres. Skipped without BSI_TEST_DATABASE_URL."""
+"""Every module's storage in Postgres. Skipped without BSI_TEST_DATABASE_URL."""
 
 from pathlib import Path
 
@@ -7,15 +7,21 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import exc, text
 
+from conftest import sample_servers, sample_users
 from platform_api.access import create_access_module
 from platform_api.access.schemas import RoleChangeRejected
 from platform_api.db import MIGRATIONS, migrate
 
-CONFIG = Path(__file__).resolve().parents[1] / "config/users.yaml"
 
+def access_module(engine, tmp_path=None):
+    """The test users (sarinzha, aibek, timur, dana), written straight into the table once."""
+    from platform_api.access.repositories.postgres import PostgresUserRepository
 
-def access_module(engine, tmp_path):
-    return create_access_module(CONFIG, tmp_path / "unused.jsonl", engine)
+    repo = PostgresUserRepository(engine)
+    if not repo.all():
+        for user in sample_users():
+            repo.save(user)
+    return create_access_module(engine)
 
 
 def test_database_is_at_the_newest_migration_and_migrating_again_is_a_no_op(pg):
@@ -28,15 +34,15 @@ def test_database_is_at_the_newest_migration_and_migrating_again_is_a_no_op(pg):
     assert versions == [ScriptDirectory.from_config(config).get_current_head()]
 
 
-def test_empty_database_is_seeded_from_yaml_once(pg, tmp_path):
+def test_an_empty_database_has_no_users_until_bsi_admins_and_sign_ins(pg):
     engine, _ = pg
-    access = access_module(engine, tmp_path)
-    assert {u.id for u in access.admin.list_users()} == {"sarinzha", "aibek", "timur", "dana"}
-    assert access.check.can_approve_tool("aibek", "write") and not access.check.can_approve_tool("sarinzha", "write")
-    [imported] = access.admin.role_history("dana")
-    assert imported.by == "system" and imported.added == ("admin",)
-    access_module(engine, tmp_path)
-    assert len(access.admin.role_history("dana")) == 1
+    assert create_access_module(engine).admin.list_users() == []
+    access = create_access_module(engine, admins=["boss"])
+    assert access.admin.me("boss").roles == ("admin",)
+    assert access.admin.sign_in("newdev").roles == ()
+    fresh = create_access_module(engine, admins=["boss"])  # a restart: nothing new
+    assert {u.id for u in fresh.admin.list_users()} == {"boss", "newdev"}
+    assert len(fresh.admin.role_history("boss")) == 1 and fresh.admin.role_history("newdev")[0].reason == "first sign-in"
 
 
 def test_role_change_is_saved_and_logged(pg, tmp_path):
@@ -45,7 +51,7 @@ def test_role_change_is_saved_and_logged(pg, tmp_path):
     access.admin.set_roles("dana", "sarinzha", ["developer", "devops"], "on call this month")
     fresh = access_module(engine, tmp_path)
     assert fresh.admin.me("sarinzha").roles == ("developer", "devops")
-    newest, _imported = fresh.admin.role_history("sarinzha")
+    [newest] = fresh.admin.role_history("sarinzha")
     assert newest.added == ("devops",) and newest.by == "Dana M." and newest.at.endswith("+00:00")
 
 
@@ -56,8 +62,7 @@ def test_last_admin_rule_still_holds(pg, tmp_path):
 
 
 @pytest.mark.parametrize("sql", [
-    "UPDATE users SET roles = '{}' WHERE id = 'dana'",        # every user keeps at least one role
-    "UPDATE users SET roles = '{root}' WHERE id = 'dana'",    # only known roles
+    "UPDATE users SET roles = '{root}' WHERE id = 'dana'",    # only known roles (none is fine: waiting for one)
 ])
 def test_database_checks_roles(pg, tmp_path, sql):
     engine, _ = pg
@@ -70,7 +75,7 @@ def test_database_checks_roles(pg, tmp_path, sql):
                                  "TRUNCATE role_changes"])
 def test_role_changes_are_append_only(pg, tmp_path, sql):
     engine, _ = pg
-    access_module(engine, tmp_path)
+    access_module(engine, tmp_path).admin.sign_in("newdev")  # one row: row triggers need something to change
     with engine.begin() as conn, pytest.raises(exc.DBAPIError, match="append-only"):
         conn.execute(text(sql))
 
@@ -102,7 +107,6 @@ def test_runs_are_stored_with_the_token_hash_and_found_by_it(pg, tmp_path):
 
 # ---- servers module ----
 
-SERVERS = Path(__file__).resolve().parents[1] / "config/servers.yaml"
 READ = ["docker_inspect", "docker_logs", "docker_ps", "docker_stats", "file_read", "folder_list"]
 
 
@@ -110,20 +114,36 @@ def servers_module(engine, tmp_path):
     from platform_api.servers import create_servers_module
     from platform_api.servers.integrations.static_tools import StaticKnownTools
 
+    from platform_api.servers.repositories.postgres import PostgresServerRepository
+
+    repo = PostgresServerRepository(engine)
+    if not repo.all():
+        for server in sample_servers():
+            repo.save(server)
     known = StaticKnownTools(frozenset(READ + ["compose_restart", "ssh_exec"]))
-    return create_servers_module(SERVERS, tmp_path / "unused.jsonl", known, access_module(engine, tmp_path).check,
-                                 engine)
+    return create_servers_module(known, access_module(engine).check, engine)
 
 
-def test_servers_are_seeded_from_yaml_once_and_the_import_is_logged(pg, tmp_path):
+def test_an_added_server_keeps_its_host_key_and_last_check(pg):
+    import asyncio
+
+    from platform_api.servers import create_servers_module
+    from platform_api.servers.integrations.fake_probe import FAKE_HOST_KEY
+    from platform_api.servers.integrations.static_tools import StaticKnownTools
+    from platform_api.servers.schemas import NewServer
+
     engine, _ = pg
-    servers = servers_module(engine, tmp_path)
-    assert [s.name for s in servers.catalog.list()] == ["dev-docker-01", "dev-docker-02", "prod-docker-01",
-                                                        "stage-docker-01"]
-    [imported] = servers.settings.access_history("prod-docker-01")
-    assert imported.by == "system" and imported.reason == "imported from servers.yaml"
-    servers_module(engine, tmp_path)
-    assert len(servers.settings.access_history("prod-docker-01")) == 1
+    servers = create_servers_module(StaticKnownTools(frozenset(READ)), access_module(engine).check, engine)
+    assert servers.catalog.list() == [] and servers.catalog.systems() == []  # nothing until someone adds it
+    servers.admin.add(NewServer("dev-docker-09", "10.20.1.19", "dev", ("superapp",), "deploy", 2222,
+                                FAKE_HOST_KEY), "dana")
+    asyncio.run(servers.admin.check("dev-docker-09", "dana"))
+    fresh = create_servers_module(StaticKnownTools(frozenset(READ)), access_module(engine).check, engine)
+    s = fresh.catalog.get("dev-docker-09")
+    assert (s.host_key, s.ssh_port, s.systems) == (FAKE_HOST_KEY, 2222, ("superapp",))
+    assert s.docker_version and s.memory_total_bytes == 8 * 1024**3 and s.checked_at.endswith("+00:00")
+    [added] = fresh.settings.access_history("dev-docker-09")
+    assert added.by == "dana" and "added the server" in added.reason
 
 
 def test_server_access_change_is_saved_and_logged(pg, tmp_path):
@@ -131,7 +151,7 @@ def test_server_access_change_is_saved_and_logged(pg, tmp_path):
     servers_module(engine, tmp_path).settings.change_allowed_tools("stage-docker-01", READ, "aibek", "read-only")
     fresh = servers_module(engine, tmp_path)
     assert list(fresh.catalog.get("stage-docker-01").allowed_tools) == READ
-    newest, _imported = fresh.settings.access_history("stage-docker-01")
+    [newest] = fresh.settings.access_history("stage-docker-01")
     assert newest.removed == ("compose_restart",) and newest.by == "aibek" and newest.at.endswith("+00:00")
 
 
@@ -147,7 +167,7 @@ def test_database_refuses_ssh_exec_on_prod_even_without_the_app(pg, tmp_path):
                                  "TRUNCATE access_changes"])
 def test_access_changes_are_append_only(pg, tmp_path, sql):
     engine, _ = pg
-    servers_module(engine, tmp_path)
+    servers_module(engine, tmp_path).settings.change_allowed_tools("dev-docker-01", READ, "dana", "one row")
     with engine.begin() as conn, pytest.raises(exc.DBAPIError, match="append-only"):
         conn.execute(text(sql))
 

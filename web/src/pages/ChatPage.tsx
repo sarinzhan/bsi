@@ -1,42 +1,32 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { applyToChat, applyToProjects } from '../api/chatReducer';
-import type { Chat, Decision, Project } from '../api/types';
-import ChatSidePanel from '../components/ChatSidePanel';
+import { applyToChat } from '../api/chatReducer';
+import type { Chat } from '../api/types';
 import MessageView from '../components/MessageView';
 import StatusBadge from '../components/StatusBadge';
 
-/** The user just opens a chat and asks. The agent decides which projects to create or change. */
+/** The user opens a chat and asks. The agent looks at the system's servers through the server tools. */
 export default function ChatPage() {
-  const { systemId = 'superapp', chatId = 'new' } = useParams();
+  const { systemId = '', chatId = 'new' } = useParams();
   const navigate = useNavigate();
   const [chat, setChat] = useState<Chat | null>(null);
-  const [projects, setProjects] = useState<Record<string, Project>>({});
-  const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [sendError, setSendError] = useState('');
   const [draft, setDraft] = useState('');
   const pendingText = useRef<string | null>(null); // first message of a new chat, sent after navigation
   const stopStream = useRef<(() => void) | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
-  // Load the chat and the projects it works in.
   useEffect(() => {
     if (chatId === 'new') {
       setChat(null);
-      setProjects({});
-      setDecisions([]);
       return;
     }
     let active = true;
     (async () => {
       try {
         const c = await api.getChat(chatId);
-        const ps = await Promise.all(c.projectIds.map((id) => api.getProject(id)));
-        const ds = await api.listDecisions(c.systemId);
-        if (!active) return;
-        setDecisions(ds.filter((d) => d.chatId === c.id));
-        setChat(c);
-        setProjects(Object.fromEntries(ps.map((p) => [p.id, p])));
+        if (active) setChat(c);
       } catch {
         if (active) navigate(`/${systemId}/chats/new`, { replace: true });
       }
@@ -52,10 +42,6 @@ export default function ChatPage() {
     stopStream.current?.();
     stopStream.current = api.sendMessage(id, text, (event) => {
       setChat((c) => (c && c.id === id ? applyToChat(c, event) : c));
-      setProjects((ps) => applyToProjects(ps, event));
-      if (event.type === 'decision') {
-        setDecisions((ds) => [event.decision, ...ds.filter((d) => d.id !== event.decision.id)]);
-      }
     });
   };
 
@@ -77,10 +63,16 @@ export default function ChatPage() {
     const text = draft.trim();
     if (!text) return;
     setDraft('');
+    setSendError('');
     if (!chat) {
-      const created = await api.createChat(systemId);
-      pendingText.current = text;
-      navigate(`/${systemId}/chats/${created.id}`);
+      try {
+        const created = await api.createChat(systemId);
+        pendingText.current = text;
+        navigate(`/${systemId}/chats/${created.id}`);
+      } catch (err) {
+        setDraft(text);
+        setSendError(err instanceof Error ? err.message : String(err));
+      }
     } else {
       startAgent(chat.id, text);
     }
@@ -93,7 +85,6 @@ export default function ChatPage() {
     }
   };
 
-  const linked = (chat?.projectIds ?? []).map((id) => projects[id]).filter(Boolean);
   const working = chat?.status === 'working';
 
   return (
@@ -104,21 +95,11 @@ export default function ChatPage() {
           {chat && chat.messages.length > 0 && <StatusBadge status={chat.status} />}
         </div>
 
-        {chat && chat.messages.length > 0 && (
-          <div className="working-in" aria-live="polite">
-            <span className="muted">Working in:</span>
-            {linked.length === 0 && <span className="muted">the agent is choosing…</span>}
-            {linked.map((p) => (
-              <Link key={p.id} to={`/${systemId}/projects/${p.id}`} className="project-chip">{p.name}</Link>
-            ))}
-          </div>
-        )}
-
         <div className="messages">
           {!chat || chat.messages.length === 0 ? (
             <div className="empty-chat">
               <h2>What do you need?</h2>
-              <p>Just describe it. The agent finds the right project in {systemId}, or creates a new one, and shows you where it works.</p>
+              <p>Ask about {systemId}: logs, containers, config. The agent looks at its servers and asks you before each step.</p>
             </div>
           ) : (
             chat.messages.map((m) => (
@@ -137,17 +118,16 @@ export default function ChatPage() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="e.g. Customers should be able to cancel an order · or: why does orders keep restarting?"
+              placeholder="e.g. why does orders-service keep restarting?"
             />
             <div className="row">
               <span className="muted" style={{ fontSize: 12 }}>{systemId} · dev · Enter to send</span>
               <button type="submit" className="send" aria-label="Send" disabled={!draft.trim() || working}>↑</button>
             </div>
           </form>
+          {sendError && <p className="form-error" role="alert">{sendError}</p>}
         </div>
       </section>
-
-      <ChatSidePanel systemId={systemId} projects={linked} decisions={decisions} />
     </>
   );
 }

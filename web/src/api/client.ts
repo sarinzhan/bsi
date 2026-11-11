@@ -1,14 +1,12 @@
 import type {
-  AccessChange, AgentEvent, Role, RoleChange, User, Chat, ChatSummary, Decision, Project, ProjectSummary, Resource, Server, ServerToolInfo, Skill, SystemInfo, ToolAnswer,
+  AccessChange, AgentEvent, Chat, ChatSummary, HostKey, NewServer, Role, RoleChange, Server, ServerToolInfo, SystemInfo,
+  ToolAnswer, User,
 } from './types';
 import { httpApi } from './http';
-import { mockApi } from './mock';
 
-/**
- * Everything the UI needs from the platform backend.
- * Implemented by httpApi (the real platform-api, see http.ts) and mockApi (in-memory, for UI work).
- */
+/** Everything the UI needs from platform-api (http.ts). All data lives in its Postgres database. */
 export interface PlatformApi {
+  /** Systems some server serves. None until the first server is added. */
   listSystems(): Promise<SystemInfo[]>;
 
   listChats(systemId: string): Promise<ChatSummary[]>;
@@ -19,33 +17,29 @@ export interface PlatformApi {
   /** The developer's answer to a server tool approval card. */
   answerToolCall(chatId: string, callId: string, answer: ToolAnswer): Promise<void>;
 
-  listProjects(systemId: string): Promise<ProjectSummary[]>;
-  getProject(projectId: string): Promise<Project>;
-
-  /** The system's decision log (ADRs), newest first. */
-  listDecisions(systemId: string): Promise<Decision[]>;
-
-  // ---- access (platform-api `access` module) ----
+  // ---- access ----
   getMe(): Promise<User>;
-  /** Dev only: "Viewing as" switcher. In prod the user comes from company SSO. */
+  /** Dev only: "Viewing as" switcher. Behind nginx the login decides who you are. */
   switchDevUser(id: string): Promise<void>;
   listUsers(): Promise<User[]>;
   /** Admins only. */
   setUserRoles(userId: string, roles: Role[], reason: string): Promise<User>;
   listRoleChanges(userId: string): Promise<RoleChange[]>;
 
+  // ---- servers ----
   listServers(): Promise<Server[]>;
-  /** Server settings (platform admins): the tools the agent may use. Rejects ssh_exec on prod. */
+  /** The platform's SSH public key, for ~/.ssh/authorized_keys on the server (DevOps and admins). */
+  platformPublicKey(): Promise<string>;
+  /** Connects to host:port and reads its SSH host key, to show its fingerprint before saving. */
+  fetchHostKey(host: string, port: number): Promise<HostKey>;
+  addServer(server: NewServer): Promise<Server>;
+  /** SSH in with the pinned key: Docker version and memory, or why it failed. */
+  checkServer(name: string): Promise<Server>;
+  /** The tools the agent may use there. Rejects ssh_exec on prod. */
   updateServerAccess(name: string, allowedTools: string[], reason: string): Promise<Server>;
   listAccessChanges(name: string): Promise<AccessChange[]>;
-  /** The server tools that exist (GET /api/servers/tools). */
+  /** The server tools that exist. */
   listServerTools(): Promise<ServerToolInfo[]>;
-  listResources(systemId: string): Promise<Resource[]>;
-  listSkills(): Promise<Skill[]>;
 }
 
-/**
- * The real backend by default. VITE_API=mock (e.g. `VITE_API=mock npm run dev`) runs the UI on in-memory
- * mock data, without any backend.
- */
-export const api: PlatformApi = import.meta.env.VITE_API === 'mock' ? mockApi : httpApi;
+export const api: PlatformApi = httpApi;

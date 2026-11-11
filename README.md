@@ -7,7 +7,7 @@ to servers that humans provide.
 
 ## Layout
 
-- `web/` — React frontend (Vite + TypeScript). Uses a mock API for now.
+- `web/` — React frontend (Vite + TypeScript), talks to platform-api.
 - `services/platform-api/` — main backend: users and roles, agent runs (one container each), servers and
   the tools allowed on each. Chat and approvals next.
 - `services/agent-runner/` — the agent loop (Anthropic SDK + MCP) inside each agent container.
@@ -32,7 +32,6 @@ and the web app, in dev mode. Production: [deploy/README.md](deploy/README.md).
 
 **Without Docker** (each agent runs as a local process, no isolation, dev only): start platform-api with
 `BSI_SANDBOX=process` and `cd web && npm run dev` (it forwards `/api` to localhost:8000).
-`VITE_API=mock npm run dev` runs the UI on mock data, without any backend.
 
 ## Database (Postgres)
 

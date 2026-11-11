@@ -3,23 +3,46 @@
 
 export type Env = 'dev' | 'stage' | 'prod';
 
+/** A system the platform works on. It exists once a server serves it (GET /api/systems). */
 export interface SystemInfo {
   id: string;
-  name: string;
-  color: string;
+  envs: Env[];
 }
 
 export interface Server {
   name: string;
   host: string;
-  runtime: 'Docker'; // v1: Docker only. Kubernetes and Swarm come later.
-  runtimeVersion: string;
   env: Env;
-  memoryUsedGb: number;
-  memoryTotalGb: number;
-  usedFor: string;
+  systems: string[];
+  sshUser: string;
+  sshPort: number;
+  /** Pinned SSH host key; the platform refuses SSH to any other. */
+  hostKey: string | null;
+  hostKeyFingerprint: string | null;
   /** Tools the agent may call on this server, set in its settings. Empty = no access. */
   allowedTools: string[];
+  /** The last connection check ("Test connection"). */
+  checkedAt: string | null;
+  dockerVersion: string | null;
+  memoryTotalBytes: number | null;
+  memoryUsedBytes: number | null;
+  checkError: string | null;
+}
+
+/** The Add server form. */
+export interface NewServer {
+  name: string;
+  host: string;
+  env: Env;
+  systems: string[];
+  sshUser: string;
+  sshPort: number;
+  hostKey: string;
+}
+
+export interface HostKey {
+  key: string;
+  fingerprint: string;
 }
 
 /** One change of a server's allowed tools, shown in its settings. */

@@ -1,14 +1,13 @@
 """Chat module: messages, one agent run at a time, the event stream, and what agent containers may post."""
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from platform_api.access import create_access_module
+from conftest import make_access
 from platform_api.agent import create_agent_module
 from platform_api.agent.integrations.fake_sandbox import FakeSandbox
 from platform_api.agent.service import RunSettings
@@ -17,15 +16,13 @@ from platform_api.chat.router import chats_router, runner_chat_router
 from platform_api.chat.schemas import ChatBusy, ChatNotAllowed, ChatRejected
 from platform_api.wiring import ChatRunListener
 
-USERS = Path(__file__).resolve().parents[1] / "config/users.yaml"
 SETTINGS = RunSettings(mcp_url="http://platform-api:8000/mcp/", platform_url="http://platform-api:8000",
                        extra_env=(("BSI_MODEL", "claude-opus-5-5"),))
 
 
 class World:
     def __init__(self, tmp_path):
-        shutil.copy(USERS, tmp_path / "users.yaml")
-        self.access = create_access_module(tmp_path / "users.yaml", tmp_path / "roles.jsonl")
+        self.access = make_access()
         self.sandbox = FakeSandbox()
         listener = ChatRunListener()
         self.agent = create_agent_module(self.access.check, self.sandbox, SETTINGS, listener=listener)

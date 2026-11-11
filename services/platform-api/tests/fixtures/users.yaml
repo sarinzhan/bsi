@@ -1,4 +1,4 @@
-# Platform users and their roles. Admins change roles on the Users page; this file is written back.
+# Test fixture: users for the tests (the platform itself creates users on sign-in and from BSI_ADMINS).
 # roles: developer, devops, admin (a user may have several; admin includes developer + devops).
 users:
   sarinzha:
