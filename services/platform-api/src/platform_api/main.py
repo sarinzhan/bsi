@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from mcp.server.transport_security import TransportSecuritySettings
 
 from platform_api.access import create_access_module
-from platform_api.access.router import access_router
+from platform_api.access.router import SessionCookie, access_router
 from platform_api.agent import create_agent_module
 from platform_api.agent.router import runner_router, runs_router
 from platform_api.agent.integrations.fake_sandbox import FakeSandbox
@@ -57,8 +57,9 @@ def build_app() -> FastAPI:
     if not logging.getLogger().handlers:  # our INFO lines (runs started/ended) in docker compose logs
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    # Everything lives in Postgres. No example data: servers are added in the web app, users are created on
-    # first sign-in, and BSI_ADMINS names the first admins (comma-separated user ids).
+    # Everything lives in Postgres. No example data: servers are added in the web app, users by an admin.
+    # The first admin: BSI_ADMIN_USERNAME / BSI_ADMIN_PASSWORD, created on first start (password changed at
+    # the first sign-in).
     database_url = env("BSI_DATABASE_URL")
     if not database_url:
         raise RuntimeError("BSI_DATABASE_URL is required (postgresql://user:password@host:5432/platform)")
@@ -68,8 +69,16 @@ def build_app() -> FastAPI:
     engine = make_engine(database_url)
     real_ssh = mode == "prod" or env("BSI_EXECUTOR") == "ssh"  # dev: no SSH at all unless asked for
 
-    admins = [a.strip() for a in env("BSI_ADMINS", "").split(",") if a.strip()]
-    access = create_access_module(engine, admins=admins)
+    admin_name = env("BSI_ADMIN_USERNAME") or "admin"
+    admin_password = env("BSI_ADMIN_PASSWORD") or "admin"
+    if not env("BSI_ADMIN_PASSWORD"):
+        log.warning("BSI_ADMIN_PASSWORD is not set: the default admin %r starts with password 'admin' "
+                    "(it must be changed at the first sign-in)", admin_name)
+    session_hours = int(env("BSI_SESSION_HOURS", "12"))
+    access = create_access_module(engine, default_admin=(admin_name, admin_password),
+                                  session_ttl=timedelta(hours=session_hours))
+    cookie = SessionCookie(path=env("BSI_BASE_PATH", "/"), secure=env("BSI_COOKIE_SECURE", "false") == "true",
+                           max_age_s=session_hours * 3600)
     tool_catalog = ToolCatalog()  # which tools exist: answered by the tools module, created below
     probe: HostProbe
     if real_ssh:
@@ -106,8 +115,8 @@ def build_app() -> FastAPI:
     if env("BSI_AGENT_HTTPS_PROXY"):
         run_env["HTTPS_PROXY"] = os.environ["BSI_AGENT_HTTPS_PROXY"]
         run_env["NO_PROXY"] = "platform-api,localhost,127.0.0.1"
-    log.info("BSI platform-api: mode=%s admins=%s sandbox=%s agent image=%s ssh=%s approvals=%s proxy=%s",
-             mode, ",".join(admins) or "-", sandbox_kind, env("BSI_AGENT_IMAGE", "-"),
+    log.info("BSI platform-api: mode=%s default admin=%s sandbox=%s agent image=%s ssh=%s approvals=%s proxy=%s",
+             mode, admin_name, sandbox_kind, env("BSI_AGENT_IMAGE", "-"),
              "real" if real_ssh else "FAKE",
              env("BSI_APPROVALS", "cards"), env("BSI_AGENT_HTTPS_PROXY") or "none")
     listener = ChatRunListener()
@@ -151,9 +160,10 @@ def build_app() -> FastAPI:
         transport_security=TransportSecuritySettings(allowed_hosts=[h.strip() for h in hosts if h.strip()]))
 
     def current_user(request: Request) -> str | None:
-        if mode == "dev":
-            return request.headers.get("x-user-id")  # dev only: "Viewing as" switcher in the web app
-        return None  # prod: company SSO session (not wired yet) -> every request is 401
+        """The session cookie's user. No one while they still have to change their password."""
+        token = request.cookies.get(cookie.name)
+        session = access.auth.session(token) if token else None
+        return session.user_id if session and not session.must_change_password else None
 
     async def reap_forever() -> None:
         """Stops containers of runs past their deadline, so a stuck agent never runs forever."""
@@ -182,7 +192,7 @@ def build_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    app.include_router(access_router(access.admin, current_user))
+    app.include_router(access_router(access.admin, current_user, access.auth, cookie))
     app.include_router(servers_router(servers.catalog, servers.settings, servers.admin, current_user))
     app.include_router(runs_router(agent.runs, current_user))
     app.include_router(chats_router(chat.chats, current_user))

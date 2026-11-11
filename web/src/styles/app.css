@@ -339,8 +339,6 @@ td { padding: 10px; border-bottom: 1px solid #eef0f3; }
 .tool-rejected { font-size: 13px; color: var(--bad); background: #fdecea; padding: 8px 10px; border-radius: 8px; }
 
 /* ---- roles ---- */
-.viewing-as { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 11px; color: var(--muted); }
-.viewing-as select { font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid #c6cbd4; border-radius: 6px; background: #fff; color: var(--ink); max-width: 100%; }
 .tool-needs { font-size: 13px; background: var(--warn-soft); color: var(--warn-ink); padding: 8px 10px; border-radius: 8px; margin: 0; }
 .table-scroll { overflow-x: auto; }
 .roles-matrix { table-layout: auto; }
@@ -377,3 +375,19 @@ fieldset:disabled .tool-option, fieldset:disabled .presets .tab { cursor: not-al
 .key-box { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #c6cbd4; border-radius: 8px; font-size: 12px; resize: none; background: var(--surface-2); word-break: break-all; }
 .cmd { margin: 0; padding: 8px 10px; border-radius: 8px; background: #14161b; color: #e8eaee; font-size: 12.5px; overflow-x: auto; }
 .fingerprint { margin: 0; font-size: 13.5px; font-weight: 600; word-break: break-all; }
+
+/* ---------- sign-in ---------- */
+.auth-page { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.auth-card { width: 100%; max-width: 380px; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.auth-card .logo { padding: 0 0 4px; }
+.auth-card h1 { margin: 0; font-size: 20px; }
+.auth-card p { margin: 0; }
+.auth-submit { min-height: 40px; }
+.auth-note { font-size: 12.5px; }
+.settings-card.narrow { max-width: 440px; }
+.ok-note { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--ok-soft); color: var(--ok); font-size: 13px; }
+.user-actions { display: flex; gap: 12px; margin-top: 4px; }
+.user-actions .link-btn { font-size: 12px; text-decoration: none; }
+.user-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.add-user { display: flex; flex-direction: column; gap: 12px; }
+.role-row { display: flex; gap: 16px; flex-wrap: wrap; }

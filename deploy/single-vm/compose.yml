@@ -5,8 +5,8 @@
 # Paths below are relative to the repo root (the folder of the first file).
 #
 # What changes compared to the local stack:
-#   - HTTPS and login come from the nginx already on the server (nginx-site.conf). It sets X-User-Id from
-#     the login, so a user can not pretend to be someone else. Stopgap until company SSO.
+#   - HTTPS comes from the nginx already on the server (nginx-site.conf). Sign-in is BSI's own login page
+#     (user name + password, session cookie); the first admin is BSI_ADMIN_USERNAME / BSI_ADMIN_PASSWORD.
 #   - platform-api: real SSH to your servers, no fixed dev tokens, database password from .env.
 #   - agent containers run on this same server (Docker socket). Simple, but AI runs next to the SSH key;
 #     the two-VM setup in deploy/README.md separates them.
@@ -23,7 +23,10 @@ services:
     environment:
       BSI_DATABASE_URL: postgresql://platform:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD in .env}@postgres:5432/platform
       BSI_RUN_TTL_S: "1800"
-      BSI_ADMINS: ${BSI_ADMINS:?set BSI_ADMINS in .env: your login name(s), comma-separated}
+      BSI_ADMIN_USERNAME: ${BSI_ADMIN_USERNAME:-admin}
+      BSI_ADMIN_PASSWORD: ${BSI_ADMIN_PASSWORD:-admin}   # changed at the first sign-in anyway
+      BSI_COOKIE_SECURE: "true"     # HTTPS only: the session cookie is never sent over plain HTTP
+      BSI_BASE_PATH: ${BSI_BASE_PATH:-/}   # the cookie is only sent to BSI's path, e.g. /bsi/
       BSI_DEV_TOKENS: "off"         # only real run tokens at /mcp/
       BSI_EXECUTOR: ssh             # real SSH (dev mode would use a fake one)
       BSI_SSH_KEY: /run/ssh/id_ed25519
@@ -35,4 +38,4 @@ services:
       - /etc/bsi/ssh:/run/ssh:ro
 
   # web: unchanged, on 127.0.0.1:8088. The server's own nginx (deploy/single-vm/nginx-site.conf) does
-  # HTTPS + login in front of it.
+  # HTTPS in front of it.

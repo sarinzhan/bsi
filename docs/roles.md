@@ -27,7 +27,8 @@ Typical combinations: developer · devops · developer + devops (on call) · adm
 
 ## Rules
 
-- Every user has at least one role. The last admin cannot lose the admin role.
+- A user may have no role (signed in, can do nothing). The last admin cannot lose the admin role.
 - Only admins change roles, with a reason. Every change is logged (who, added, removed, why, when).
 - Unknown user or permission = denied. The backend decides; the UI only hides buttons.
-- Sign-in: dev uses the "Viewing as" switcher (`X-User-Id` header). Prod needs company SSO — not wired yet.
+- Sign-in: user name + password on BSI's login page, session cookie. Admins add users with a temporary
+  password and can reset it; the user must pick their own at the next sign-in. Company SSO can replace it later.

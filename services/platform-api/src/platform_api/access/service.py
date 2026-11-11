@@ -9,7 +9,7 @@ from platform_api.access.models import (
     APPROVAL_FOR_TOOL_KIND, ROLE_PERMISSIONS, InvalidUser, Permission, Role, RolesChanged, User,
 )
 from platform_api.access.schemas import (
-    AccessCheck, NotAllowed, RoleChange, RoleChangeRejected, UserAdmin, UserNotFound, UserView,
+    AccessCheck, NotAllowed, RoleChange, RoleChangeRejected, UserAdmin, UserNotFound, UserRejected, UserView,
 )
 from platform_api.access.interfaces import RoleChangeLog, UserRepository
 
@@ -58,29 +58,34 @@ class AccessService(AccessCheck, UserAdmin):
 
     # ---- UserAdmin ----
 
-    def sign_in(self, user_id: str) -> UserView:
-        """The user the login (nginx, later SSO) says this is. Unknown: created now, without roles."""
-        try:
-            return _view(self._find(user_id))
-        except UserNotFound:
-            pass
-        try:
-            user = User(user_id, user_id, frozenset())
-        except InvalidUser as e:
-            raise UserNotFound(str(e)) from e
-        self._users.save(user)
-        self._log.append(RolesChanged(user_id, (), (), "system", "first sign-in", _now()))
-        return _view(user)
+    def add_user(self, actor_id: str, user_id: str, name: str, roles: list[str]) -> UserView:
+        actor = self._find(actor_id)
+        if not actor.can(Permission.MANAGE_USERS):
+            raise NotAllowed("only admins can add users")
+        return self._create(user_id, name, roles, actor.name, "new user")
 
-    def ensure_admins(self, user_ids: Iterable[str]) -> None:
-        """Bootstrap (BSI_ADMINS): each listed user that does not exist yet becomes an admin.
-        Existing users are left alone, so removing someone's admin role is not undone on restart."""
-        existing = {u.id for u in self._users.all()}
-        for uid in (u.strip() for u in user_ids):
-            if uid and uid not in existing:
-                self._users.save(User(uid, uid, frozenset({Role.ADMIN})))
-                self._log.append(RolesChanged(uid, (Role.ADMIN.value,), (), "system", "BSI_ADMINS", _now()))
-                existing.add(uid)
+    def ensure_user(self, user_id: str, roles: Iterable[Role], reason: str) -> bool:
+        """Bootstrap (the default admin): creates the user if missing. Existing users are left alone, so
+        taking someone's admin role away is not undone on restart. True if created."""
+        if any(u.id == user_id for u in self._users.all()):
+            return False
+        self._create(user_id, user_id, [r.value for r in roles], "system", reason)
+        return True
+
+    def _create(self, user_id: str, name: str, roles: list[str], by: str, reason: str) -> UserView:
+        user_id = user_id.strip().lower()
+        if any(u.id == user_id for u in self._users.all()):
+            raise UserRejected(f"user {user_id!r} already exists")
+        try:
+            user = User(user_id, name.strip() or user_id, frozenset(Role(r) for r in roles))
+        except InvalidUser:
+            raise UserRejected("user name: 2-41 characters, lowercase letters, digits, . _ -, starting with a "
+                               "letter") from None
+        except ValueError:
+            raise UserRejected(f"unknown role in {roles}") from None
+        self._users.save(user)
+        self._log.append(RolesChanged(user_id, tuple(sorted(r.value for r in user.roles)), (), by, reason, _now()))
+        return _view(user)
 
     def me(self, user_id: str) -> UserView:
         return _view(self._find(user_id))

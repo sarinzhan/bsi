@@ -5,20 +5,20 @@ import type {
 } from './types';
 
 // The real platform-api, same origin: nginx (prod) or the Vite dev server (npm run dev) forwards /api.
+// Who you are: the HttpOnly session cookie set by POST /api/auth/login; the browser sends it by itself.
 
-const DEV_USER_KEY = 'bsi.devUser';
-
-function devUser(): string {
-  try {
-    return localStorage.getItem(DEV_USER_KEY) || 'dev';
-  } catch {
-    return 'dev';
+/** An error answer from platform-api. status 401: not signed in (or the session ended). */
+export class ApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
   }
 }
 
-/** Dev sign-in: the "Viewing as" switcher sends X-User-Id. Prod will use the company SSO session instead. */
+/** Fired on any 401 except from login itself: the app shows the sign-in page again. */
+export const SIGNED_OUT_EVENT = 'bsi:signed-out';
+
 function headers(extra?: Record<string, string>): Record<string, string> {
-  return { 'X-User-Id': devUser(), ...extra };
+  return { ...extra };
 }
 
 /** "/api/..." -> "/bsi/api/..." when the app is served under a base path (BSI_BASE_PATH at build time). */
@@ -39,7 +39,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     } catch {
       /* not JSON */
     }
-    throw new Error(detail);
+    if (res.status === 401 && path !== '/api/auth/login') window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+    throw new ApiError(res.status, detail);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
@@ -78,7 +79,16 @@ const toServer = (s: ServerInfo): Server => ({
   checkError: s.check_error,
 });
 
-const toUser = (u: { id: string; name: string; roles: string[] }): User => ({ id: u.id, name: u.name, roles: u.roles as Role[] });
+interface UserInfo {
+  id: string;
+  name: string;
+  roles: string[];
+  must_change_password?: boolean;
+}
+
+const toUser = (u: UserInfo): User => ({
+  id: u.id, name: u.name, roles: u.roles as Role[], mustChangePassword: u.must_change_password ?? false,
+});
 
 const toChange = <T extends AccessChange | RoleChange>(c: T): T => ({ ...c, added: [...c.added], removed: [...c.removed] });
 
@@ -118,7 +128,7 @@ export const httpApi: PlatformApi = {
           headers: headers({ Accept: 'text/event-stream' }),
           signal: abort.signal,
         });
-        if (!res.ok || !res.body) throw new Error(`event stream: ${res.status}`);
+        if (!res.ok || !res.body) throw new ApiError(res.status, `event stream: ${res.status}`);
         await readEvents(res, onEvent);
       } catch (e) {
         if (abort.signal.aborted) return;
@@ -135,17 +145,15 @@ export const httpApi: PlatformApi = {
     call<void>('POST', `/api/chats/${chatId}/tool-calls/${callId}/answer`, { answer }),
 
   // ---- access module ----
-  getMe: async () => toUser(await call('GET', '/api/me')),
-  async switchDevUser(id) {
-    try {
-      localStorage.setItem(DEV_USER_KEY, id);
-    } catch {
-      /* private mode: the switch lasts until reload */
-    }
-  },
+  getMe: async () => toUser(await call<UserInfo>('GET', '/api/me')),
+  login: async (username, password) => toUser(await call<UserInfo>('POST', '/api/auth/login', { username, password })),
+  logout: () => call<void>('POST', '/api/auth/logout'),
+  changePassword: (current, next) => call<void>('POST', '/api/me/password', { current, new: next }),
+  addUser: async (u) => toUser(await call<UserInfo>('POST', '/api/users', u)),
+  resetPassword: (userId, password) => call<void>('PUT', `/api/users/${userId}/password`, { password }),
   listUsers: async () =>
-    (await call<{ id: string; name: string; roles: string[] }[]>('GET', '/api/users')).map(toUser).sort((a, b) => a.name.localeCompare(b.name)),
-  setUserRoles: async (userId, roles, reason) => toUser(await call('PUT', `/api/users/${userId}/roles`, { roles, reason })),
+    (await call<UserInfo[]>('GET', '/api/users')).map(toUser).sort((a, b) => a.name.localeCompare(b.name)),
+  setUserRoles: async (userId, roles, reason) => toUser(await call<UserInfo>('PUT', `/api/users/${userId}/roles`, { roles, reason })),
   listRoleChanges: async (userId) => (await call<RoleChange[]>('GET', `/api/users/${userId}/role-history`)).map(toChange),
 
   // ---- servers module ----

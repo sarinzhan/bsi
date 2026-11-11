@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { rolesText } from '../api/access';
-import type { ChatSummary, SystemInfo, User } from '../api/types';
+import type { ChatSummary, SystemInfo } from '../api/types';
 import { rememberSystem } from '../App';
 import { useCurrentUser } from '../auth';
 import { statusColor } from './StatusBadge';
@@ -13,8 +13,7 @@ export default function Sidebar() {
   const location = useLocation();
   const [systems, setSystems] = useState<SystemInfo[]>([]);
   const [chats, setChats] = useState<ChatSummary[]>([]);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const { user, switchUser } = useCurrentUser();
+  const { user, logout } = useCurrentUser();
   // On platform pages (servers, users) there is no system in the URL: keep showing the first one's chats.
   const systemId = params.systemId ?? systems[0]?.id;
 
@@ -25,10 +24,6 @@ export default function Sidebar() {
   useEffect(() => {
     if (params.systemId) rememberSystem(params.systemId);
   }, [params.systemId]);
-
-  useEffect(() => {
-    api.listUsers().then(setAllUsers).catch(() => setAllUsers([]));
-  }, [user]);
 
   // Refresh on navigation and every 2 s (titles and statuses change while the agent works).
   useEffect(() => {
@@ -89,16 +84,10 @@ export default function Sidebar() {
         <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3, minWidth: 0, flex: 1 }}>
           <span style={{ fontWeight: 600, fontSize: 13 }}>{user?.name}</span>
           <span className="muted" style={{ fontSize: 12 }}>{user ? rolesText(user.roles) || 'no role yet' : ''}</span>
-          {import.meta.env.DEV && (
-            <label className="viewing-as">
-              <span>Viewing as (dev)</span>
-              <select value={user?.id ?? ''} onChange={(e) => void switchUser(e.target.value)}>
-                {allUsers.map((u) => (
-                  <option key={u.id} value={u.id}>{u.name} · {rolesText(u.roles) || 'no role'}</option>
-                ))}
-              </select>
-            </label>
-          )}
+          <span className="user-actions">
+            <NavLink to="/account/password" className="link-btn">Password</NavLink>
+            <button type="button" className="link-btn" onClick={() => void logout().then(() => navigate('/'))}>Sign out</button>
+          </span>
         </div>
       </div>
     </nav>

@@ -33,7 +33,11 @@ def test_allowed_hosts_come_from_settings(monkeypatch):
 def test_mcp_lists_the_tools_and_the_web_app_gets_the_same_catalog():
     with TestClient(build_app(), base_url="http://localhost:8000") as client:
         listed = client.post("/mcp/", headers=MCP_HEADERS, json=LIST_TOOLS).json()["result"]["tools"]
-        catalog = client.get("/api/servers/tools", headers={"X-User-Id": "sarinzha"}).json()
+        # the default admin (admin/admin) signs in and must pick a new password first
+        assert client.post("/api/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+        assert client.get("/api/servers/tools").status_code == 401
+        assert client.post("/api/me/password", json={"current": "admin", "new": "a-long-new-password"}).status_code == 204
+        catalog = client.get("/api/servers/tools").json()
     assert len(listed) == 11 and {t["name"] for t in listed} == {t["name"] for t in catalog}
     assert {"docker_logs", "ssh_exec"} <= {t["name"] for t in catalog} and catalog[0]["approval"]
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import Enum
 
 
@@ -86,6 +87,25 @@ class User:
 
     def with_roles(self, roles: frozenset[Role]) -> "User":
         return replace(self, roles=frozenset(roles))
+
+
+@dataclass(frozen=True)
+class Credential:
+    """A user's password (scrypt hash). must_change: set by an admin (new user, reset) or for the default
+    admin; until it is changed the user can only change it (and sign out)."""
+
+    user_id: str
+    password_hash: str
+    must_change: bool
+
+
+@dataclass(frozen=True)
+class SessionRecord:
+    """A signed-in browser. Only the SHA-256 of the cookie's token is stored."""
+
+    token_hash: str
+    user_id: str
+    expires_at: datetime
 
 
 @dataclass(frozen=True)

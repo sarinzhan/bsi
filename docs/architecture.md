@@ -88,14 +88,15 @@ One Postgres database, `platform`. Each module owns its tables; no foreign keys 
 
 Schema changes are Alembic migrations (`src/platform_api/migrations/versions/`), applied on start.
 Append-only tables have a trigger that rejects UPDATE, DELETE and TRUNCATE. There is no example data: the
-first admins come from `BSI_ADMINS`, other users are created on first sign-in without roles, and servers are
+first admin comes from `BSI_ADMIN_USERNAME` / `BSI_ADMIN_PASSWORD`, other users are added by an admin
+(`user_credentials`: scrypt hashes; `sessions`: SHA-256 of the cookie token), and servers are
 added in the web app with their SSH host key pinned. Only tests run the modules without Postgres (in memory).
 
 ## HTTP surface
 
 | caller | routes | auth |
 |---|---|---|
-| browser | `/api/me`, `/api/users…`, `/api/roles`, `/api/servers…`, `/api/servers/tools`, `/api/chats…`, `GET /api/chats/{id}/events` (SSE), `POST /api/chats/{id}/tool-calls/{call}/answer`, `/api/runs…` | user (dev: `X-User-Id`; prod: company SSO, not built) |
+| browser | `/api/me`, `/api/users…`, `/api/roles`, `/api/servers…`, `/api/servers/tools`, `/api/chats…`, `GET /api/chats/{id}/events` (SSE), `POST /api/chats/{id}/tool-calls/{call}/answer`, `/api/runs…` | user: session cookie from `POST /api/auth/login` (company SSO later) |
 | agent container | `GET /runner/context`, `POST /runner/events`, `POST /runner/finish`, MCP at `/mcp/` | `Bearer <run token>` |
 
 nginx routes only `/` and `/api/*` from outside; `/runner` and `/mcp` are reached by agent containers on the

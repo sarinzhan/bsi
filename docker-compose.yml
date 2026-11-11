@@ -13,7 +13,7 @@
 #                           Agent containers can NOT reach postgres or web.
 #
 # Dev mode on purpose: prod mode needs company SSO (not wired yet).
-# In dev, the web app signs you in with the "Viewing as" switcher and the server tools use a fake SSH executor.
+# In dev you sign in as admin / admin (asked to change it), and the server tools use a fake SSH executor.
 # Approvals are real (cards in the chat). Agent runs: none by default (fake sandbox); for real agent
 # containers add docker-compose.agents.yml (see that file).
 
@@ -64,7 +64,9 @@ services:
     image: ${BSI_IMAGES:-bsi}/platform-api:${BSI_TAG:-local}
     environment:
       BSI_MODE: dev
-      BSI_ADMINS: ${BSI_ADMINS:-}               # first admins (user ids, comma-separated); others start without roles
+      # first admin, created on first start; the password must be changed at the first sign-in
+      BSI_ADMIN_USERNAME: ${BSI_ADMIN_USERNAME:-admin}
+      BSI_ADMIN_PASSWORD: ${BSI_ADMIN_PASSWORD:-admin}
       BSI_DATABASE_URL: postgresql://platform:dev-platform@postgres:5432/platform
       BSI_SANDBOX: fake           # starts no containers; docker-compose.agents.yml switches to real ones
       BSI_RUN_TTL_S: "600"

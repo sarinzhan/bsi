@@ -70,7 +70,7 @@ def sample_servers():
                    frozenset(s.get("systems") or [])) for name, s in raw.items()]
 
 
-def make_access(engine=None, admins=()):
+def make_access(engine=None):
     from platform_api.access import create_access_module
 
-    return create_access_module(engine, admins=admins, users=sample_users())
+    return create_access_module(engine, users=sample_users())

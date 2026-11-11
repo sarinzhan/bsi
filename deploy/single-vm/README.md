@@ -9,8 +9,10 @@ your laptop ──git push──► GitHub ──git pull──► server
                                                  docker compose: postgres, platform-api, web, agent containers
 ```
 
-Login is nginx basic auth in the server's own nginx (stopgap until company SSO). platform-api runs in dev
-mode behind it, and nginx sets `X-User-Id` from the login, so nobody can act as another user.
+Sign-in is BSI's own login page: user name + password (scrypt hashes in Postgres) and an HttpOnly, Secure
+session cookie. The first admin is created on first start (`admin` / `admin` unless you set
+`BSI_ADMIN_USERNAME` / `BSI_ADMIN_PASSWORD`) and must pick a new password at the first sign-in. The server's
+nginx only does HTTPS.
 
 ## Once: on your laptop
 
@@ -25,7 +27,7 @@ git push -u origin main
 **1. Docker and git**
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
-sudo apt-get install -y git apache2-utils     # apache2-utils: htpasswd. nginx is already there.
+sudo apt-get install -y git                   # nginx is already there
 ```
 
 **2. Read-only access to the GitHub repo (deploy key)**
@@ -40,9 +42,9 @@ EOF
 sudo git clone git@github.com:<you>/bsi.git /opt/bsi
 ```
 
-**3. Nothing to prepare for users and servers.** The database starts empty. `BSI_ADMINS` (step 4) names
-the first admin(s). Everyone else is created when they first log in, with no role until an admin gives one.
-Servers are added in the web app (Servers → Add server).
+**3. Nothing to prepare for users and servers.** The database starts empty except for the first admin
+(step 4). That admin adds everyone else on the Users page, each with a temporary password that they change
+at their first sign-in. Servers are added in the web app (Servers → Add server).
 
 **4. Secrets** (never in git)
 ```bash
@@ -52,7 +54,8 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.agents.yml:deploy/single-vm/compo
 POSTGRES_ADMIN_PASSWORD=$(openssl rand -hex 24)
 PLATFORM_DB_PASSWORD=$(openssl rand -hex 24)
 ANTHROPIC_API_KEY=sk-ant-api03-...
-BSI_ADMINS=sarinzha                 # your login name(s), comma-separated: the first admins
+BSI_ADMIN_USERNAME=admin            # the first admin (default admin)
+BSI_ADMIN_PASSWORD=$(openssl rand -hex 12)   # its first password (default admin); changed at the first sign-in
 EOF
 sudo chmod 600 .env
 ```
@@ -67,13 +70,10 @@ The web app shows this public key when you add a server, and you put it in that 
 pins it in the database. You don't edit a `known_hosts` file.
 (platform-api runs as root here because it uses the Docker socket, so root-owned files are fine.)
 
-**6. Logins.** The login name becomes the user id in BSI (lowercase letters, digits, `.`, `_`, `-`).
-Your own login must match `BSI_ADMINS`.
-```bash
-sudo htpasswd -cB /etc/nginx/bsi.htpasswd sarinzha     # -c only for the first user
-sudo htpasswd -B  /etc/nginx/bsi.htpasswd aibek          # gets no role until an admin gives one
-sudo chown root:www-data /etc/nginx/bsi.htpasswd && sudo chmod 640 /etc/nginx/bsi.htpasswd
-```
+**6. Logins.** Nothing to set up on the server. After the first start, open BSI, sign in with
+`BSI_ADMIN_USERNAME` / `BSI_ADMIN_PASSWORD` (`grep BSI_ADMIN .env`), pick your own password, then add users
+on the Users page. Forgot a password? An admin clicks "Reset password" for that user. Changing
+`BSI_ADMIN_PASSWORD` later does nothing once the admin has a password.
 
 **7. Your nginx.** `deploy/single-vm/nginx-site.conf` has two ways:
 - **A. Under a path of a site you already have** (`https://your-host/bsi/`): paste its two `location`
@@ -81,8 +81,10 @@ sudo chown root:www-data /etc/nginx/bsi.htpasswd && sudo chmod 640 /etc/nginx/bs
 - **B. On its own host name** (`https://bsi.example.internal/`): a separate `server { }` with its own
   certificate.
 
-Both keep the two lines that matter: `auth_basic` (the login) and `proxy_set_header X-User-Id $remote_user`.
-Without them anyone can act as any user. Then `sudo nginx -t && sudo systemctl reload nginx`.
+Keep it HTTPS: the session cookie is marked Secure, so over plain HTTP the browser never sends it and
+sign-in seems to "not stick". Then `sudo nginx -t && sudo systemctl reload nginx`.
+Moving from the old basic-auth setup: remove the `auth_basic`, `auth_basic_user_file`,
+`X-User-Id` and `Authorization` lines from your nginx site.
 
 **Under a path** (way A): the app must know its path when it is built, because it loads `/bsi/assets/...`
 and calls `/bsi/api/...`. Build with:
@@ -168,11 +170,11 @@ Restore: `docker compose exec -T postgres pg_restore -U bsi_admin -d platform --
 
 ## Limits of this setup
 
-- **Basic auth is not SSO**: shared passwords, no 2FA. Keep 443 inside the company network or VPN.
+- **Passwords, not SSO**: no 2FA. 5 wrong passwords lock a user name for a minute. Keep 443 inside the
+  company network or VPN.
 - **AI runs next to the SSH key.** Agent containers run on this server, and platform-api uses the
   Docker socket, which gives root on this server. Agent containers only call the server tools and are
   locked down. The two-VM setup in `deploy/README.md` removes this risk.
 - **The Anthropic API key is inside agent containers** (no model proxy yet).
-- The "Viewing as" switcher still shows in the web app, but it does nothing: nginx decides who you are.
-- Anyone with a shell on this server can call `127.0.0.1:8088` directly and set `X-User-Id` themselves.
-  Only give server logins to people who are admins anyway.
+- Anyone with root on this server can read the database and the `.env`. Only give server logins to
+  people who are admins anyway.

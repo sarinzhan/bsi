@@ -1,14 +1,18 @@
-"""access module: users, roles (developer, devops, admin) and what each may do."""
+"""access module: users, roles (developer, devops, admin), what each may do, and sign-in with a password."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Iterable
 
-from platform_api.access.interfaces import RoleChangeLog, UserRepository
+from platform_api.access.auth import AuthService
+from platform_api.access.interfaces import CredentialStore, RoleChangeLog, SessionStore, UserRepository
 from platform_api.access.models import User
-from platform_api.access.repositories.memory import InMemoryRoleChangeLog, InMemoryUserRepository
-from platform_api.access.schemas import AccessCheck, UserAdmin
+from platform_api.access.repositories.memory import (
+    InMemoryCredentialStore, InMemoryRoleChangeLog, InMemorySessionStore, InMemoryUserRepository,
+)
+from platform_api.access.schemas import AccessCheck, Auth, UserAdmin
 from platform_api.access.service import AccessService
 
 if TYPE_CHECKING:
@@ -18,24 +22,35 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class AccessModule:
     check: AccessCheck  # for other modules: can(user, permission)
-    admin: UserAdmin  # for the Users page and sign-in
+    admin: UserAdmin  # for the Users page
+    auth: Auth  # sign-in, sessions, passwords
 
 
-def create_access_module(engine: "Engine | None" = None, admins: Iterable[str] = (),
-                         users: Iterable[User] = ()) -> AccessModule:
-    """engine: users and role changes in Postgres (the platform). No engine: in memory, for tests (`users`).
+def create_access_module(engine: "Engine | None" = None, users: Iterable[User] = (),
+                         default_admin: tuple[str, str] | None = None,
+                         session_ttl: timedelta = timedelta(hours=12)) -> AccessModule:
+    """engine: everything in Postgres (the platform). No engine: in memory, for tests (`users`).
 
-    admins: user ids that become admins if they do not exist yet (BSI_ADMINS): how the first admin gets in.
-    Everyone else is created on first sign-in without roles, until an admin gives them one.
+    default_admin: (user name, password) created as an admin on first start, if that user has no password
+    yet (BSI_ADMIN_USERNAME / BSI_ADMIN_PASSWORD). The password must be changed at the first sign-in.
+    Other users are added by an admin on the Users page.
     """
     repo: UserRepository
     log: RoleChangeLog
+    credentials: CredentialStore
+    sessions: SessionStore
     if engine is None:
         repo, log = InMemoryUserRepository(users), InMemoryRoleChangeLog()
+        credentials, sessions = InMemoryCredentialStore(), InMemorySessionStore()
     else:
-        from platform_api.access.repositories.postgres import PostgresRoleChangeLog, PostgresUserRepository
+        from platform_api.access.repositories.postgres import (
+            PostgresCredentialStore, PostgresRoleChangeLog, PostgresSessionStore, PostgresUserRepository,
+        )
 
         repo, log = PostgresUserRepository(engine), PostgresRoleChangeLog(engine)
+        credentials, sessions = PostgresCredentialStore(engine), PostgresSessionStore(engine)
     service = AccessService(repo, log)
-    service.ensure_admins(admins)
-    return AccessModule(check=service, admin=service)
+    auth = AuthService(service, credentials, sessions, session_ttl)
+    if default_admin:
+        auth.ensure_default_admin(*default_admin)
+    return AccessModule(check=service, admin=service, auth=auth)

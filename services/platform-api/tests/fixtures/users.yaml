@@ -1,4 +1,4 @@
-# Test fixture: users for the tests (the platform itself creates users on sign-in and from BSI_ADMINS).
+# Test fixture: users for the tests (the platform itself: the default admin, then users added by an admin).
 # roles: developer, devops, admin (a user may have several; admin includes developer + devops).
 users:
   sarinzha:

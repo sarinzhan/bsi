@@ -1,5 +1,5 @@
 import type {
-  AccessChange, AgentEvent, Chat, ChatSummary, HostKey, NewServer, Role, RoleChange, Server, ServerToolInfo, SystemInfo,
+  AccessChange, AgentEvent, Chat, ChatSummary, HostKey, NewServer, NewUser, Role, RoleChange, Server, ServerToolInfo, SystemInfo,
   ToolAnswer, User,
 } from './types';
 import { httpApi } from './http';
@@ -18,10 +18,17 @@ export interface PlatformApi {
   answerToolCall(chatId: string, callId: string, answer: ToolAnswer): Promise<void>;
 
   // ---- access ----
+  /** Rejects with ApiError status 401 when not signed in. */
   getMe(): Promise<User>;
-  /** Dev only: "Viewing as" switcher. Behind nginx the login decides who you are. */
-  switchDevUser(id: string): Promise<void>;
+  /** Sets the session cookie (HttpOnly: the page never sees the token). */
+  login(username: string, password: string): Promise<User>;
+  logout(): Promise<void>;
+  changePassword(current: string, next: string): Promise<void>;
   listUsers(): Promise<User[]>;
+  /** Admins only. */
+  addUser(user: NewUser): Promise<User>;
+  /** Admins only: a temporary password, the user picks their own at the next sign-in. */
+  resetPassword(userId: string, password: string): Promise<void>;
   /** Admins only. */
   setUserRoles(userId: string, roles: Role[], reason: string): Promise<User>;
   listRoleChanges(userId: string): Promise<RoleChange[]>;

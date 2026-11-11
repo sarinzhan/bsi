@@ -34,15 +34,29 @@ def test_database_is_at_the_newest_migration_and_migrating_again_is_a_no_op(pg):
     assert versions == [ScriptDirectory.from_config(config).get_current_head()]
 
 
-def test_an_empty_database_has_no_users_until_bsi_admins_and_sign_ins(pg):
+def test_an_empty_database_gets_the_default_admin_once_and_passwords_and_sessions_are_stored(pg):
     engine, _ = pg
     assert create_access_module(engine).admin.list_users() == []
-    access = create_access_module(engine, admins=["boss"])
+    access = create_access_module(engine, default_admin=("boss", "admin"))
     assert access.admin.me("boss").roles == ("admin",)
-    assert access.admin.sign_in("newdev").roles == ()
-    fresh = create_access_module(engine, admins=["boss"])  # a restart: nothing new
+    token, who = access.auth.login("boss", "admin")
+    assert who.must_change_password
+    token = access.auth.change_password("boss", "admin", "a-long-new-password")
+    access.auth.create_user("boss", "newdev", "New Dev", [], "temporary-pass-1")
+
+    fresh = create_access_module(engine, default_admin=("boss", "admin"))  # a restart: nothing reset
     assert {u.id for u in fresh.admin.list_users()} == {"boss", "newdev"}
-    assert len(fresh.admin.role_history("boss")) == 1 and fresh.admin.role_history("newdev")[0].reason == "first sign-in"
+    assert len(fresh.admin.role_history("boss")) == 1
+    assert fresh.auth.session(token).user_id == "boss"  # the session survives the restart
+    assert not fresh.auth.session(token).must_change_password
+    _, who = fresh.auth.login("newdev", "temporary-pass-1")
+    assert who.must_change_password
+    fresh.auth.reset_password("boss", "boss", "another-long-password")
+    assert fresh.auth.session(token) is None  # reset: signed out everywhere
+    with engine.connect() as conn:
+        hashes = conn.scalars(text("SELECT password_hash FROM user_credentials")).all()
+        tokens = conn.scalars(text("SELECT token_hash FROM sessions")).all()
+    assert all(h.startswith("scrypt$") for h in hashes) and token not in tokens  # only hashes are stored
 
 
 def test_role_change_is_saved_and_logged(pg, tmp_path):
@@ -75,7 +89,7 @@ def test_database_checks_roles(pg, tmp_path, sql):
                                  "TRUNCATE role_changes"])
 def test_role_changes_are_append_only(pg, tmp_path, sql):
     engine, _ = pg
-    access_module(engine, tmp_path).admin.sign_in("newdev")  # one row: row triggers need something to change
+    access_module(engine, tmp_path).admin.add_user("dana", "newdev", "", [])  # one row: row triggers need something to change
     with engine.begin() as conn, pytest.raises(exc.DBAPIError, match="append-only"):
         conn.execute(text(sql))
 

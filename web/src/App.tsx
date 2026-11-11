@@ -3,7 +3,9 @@ import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { api } from './api/client';
 import { CurrentUserProvider, useCurrentUser } from './auth';
 import Sidebar from './components/Sidebar';
+import ChangePasswordPage from './pages/ChangePasswordPage';
 import ChatPage from './pages/ChatPage';
+import LoginPage from './pages/LoginPage';
 import ServerSettingsPage from './pages/ServerSettingsPage';
 import ServersPage from './pages/ServersPage';
 import UsersPage from './pages/UsersPage';
@@ -64,20 +66,32 @@ function Layout() {
   );
 }
 
-export default function App() {
+/** Not signed in: the sign-in page. Temporary password: pick your own first. Then the app. */
+function Gate() {
+  const { user } = useCurrentUser();
+  if (user === undefined) return <div className="page muted">Loading…</div>;
+  if (user === null) return <LoginPage />;
+  if (user.mustChangePassword) return <ChangePasswordPage forced />;
   return (
-    <CurrentUserProvider>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
           <Route path="/servers" element={<ServersPage />} />
           <Route path="/servers/:serverName" element={<ServerSettingsPage />} />
           <Route path="/users" element={<UsersPage />} />
+          <Route path="/account/password" element={<ChangePasswordPage />} />
           <Route path="/:systemId/chats/:chatId" element={<ChatPage />} />
           <Route path="/:systemId/*" element={<Navigate to="chats/new" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <CurrentUserProvider>
+      <Gate />
     </CurrentUserProvider>
   );
 }

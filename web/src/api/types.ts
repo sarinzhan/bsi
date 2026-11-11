@@ -218,6 +218,16 @@ export interface User {
   id: string;
   name: string;
   roles: Role[];
+  /** Only on the signed-in user: a new user, a reset or the default admin must pick a password first. */
+  mustChangePassword?: boolean;
+}
+
+/** An admin adds a user with a temporary password (changed at their first sign-in). */
+export interface NewUser {
+  id: string;
+  name: string;
+  roles: Role[];
+  password: string;
 }
 
 export interface RoleChange {

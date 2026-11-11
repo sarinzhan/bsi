@@ -25,9 +25,9 @@ each module:  router.py -> service.py -> repositories/ + integrations/ (through 
 ```bash
 docker compose up -d postgres          # from the repo root
 uv sync
-export BSI_DATABASE_URL=postgresql://platform:dev-platform@localhost:5432/platform BSI_ADMINS=dev
+export BSI_DATABASE_URL=postgresql://platform:dev-platform@localhost:5432/platform
 uv run uvicorn --factory platform_api.main:build_app --port 8000
-open http://localhost:8000/docs        # X-User-Id: dev is an admin; any other id signs in without roles
+open http://localhost:8000/docs        # sign in first: POST /api/auth/login (admin / admin), then change it
 ```
 The database starts empty: no example users or servers. Add servers in the web app.
 
@@ -45,7 +45,10 @@ uv run alembic check # ORM models and migrations match (needs BSI_DATABASE_URL)
 |---|---|
 | `BSI_MODE` | `dev` (default) or `prod` |
 | `BSI_DATABASE_URL` | Postgres. Required: all data lives there |
-| `BSI_ADMINS` | user ids that become admins if they don't exist yet (the first admins). Others start without roles |
+| `BSI_ADMIN_USERNAME`, `BSI_ADMIN_PASSWORD` | the first admin (default `admin` / `admin`), created on first start if it has no password yet; the password must be changed at the first sign-in |
+| `BSI_SESSION_HOURS` | how long a sign-in lasts (default 12) |
+| `BSI_COOKIE_SECURE` | `true` behind HTTPS: the session cookie is only sent over HTTPS (default `false`) |
+| `BSI_BASE_PATH` | the app's path, e.g. `/bsi/`: the session cookie is only sent there (default `/`) |
 | `BSI_SANDBOX` | `docker` (default in prod), `fake` (default in dev: starts nothing) or `process` (dev only: runs agent-runner as a local process, no isolation) |
 | `BSI_RUNNER_COMMAND` | `process` sandbox: command to start agent-runner (default `uv run --project ../agent-runner python -m agent_runner`) |
 | `BSI_LLM`, `BSI_MODEL`, `BSI_EFFORT` | passed to agent containers: `anthropic` or `scripted` (no model), default `claude-opus-5-5`, `high` |

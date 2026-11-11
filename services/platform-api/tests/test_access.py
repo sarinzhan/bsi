@@ -8,7 +8,7 @@ from conftest import make_access
 from platform_api.access import create_access_module
 from platform_api.access.router import access_router
 from platform_api.access.models import ROLE_PERMISSIONS, Permission, Role
-from platform_api.access.schemas import NotAllowed, RoleChangeRejected, UserNotFound
+from platform_api.access.schemas import NotAllowed, RoleChangeRejected, UserNotFound, UserRejected
 
 
 @pytest.fixture
@@ -75,42 +75,24 @@ def test_http(access):
     assert set(c.get("/api/roles").json()) == {"developer", "devops", "admin"}
 
 
-def test_first_sign_in_creates_the_user_without_roles():
-    module = create_access_module()
-    view = module.admin.sign_in("newdev")
-    assert view.roles == () and view.permissions == () and view.name == "newdev"
+def test_an_admin_adds_users_with_or_without_roles():
+    module = make_access()
+    view = module.admin.add_user("dana", "NewDev ", "", [])
+    assert view.id == "newdev" and view.name == "newdev" and view.roles == ()
     assert not module.check.can("newdev", "chat.use")  # nothing until an admin gives a role
     [event] = module.admin.role_history("newdev")
-    assert event.by == "system" and event.reason == "first sign-in"
-    assert module.admin.sign_in("newdev").roles == ()  # second visit: the same user, nothing logged
-    assert len(module.admin.role_history("newdev")) == 1
-    with pytest.raises(UserNotFound):
-        module.admin.sign_in("Not A Valid Id")
-
-
-def test_bsi_admins_bootstrap_only_creates_missing_users():
-    module = create_access_module(admins=["boss", " ", "boss"])
-    assert module.admin.me("boss").roles == ("admin",)
-    module.admin.sign_in("second")
-    module.admin.set_roles("boss", "second", ["admin"], "second admin")
-    module.admin.set_roles("second", "boss", ["developer"], "steps down")
-    module.check  # a restart with the same BSI_ADMINS must not make boss admin again:
-    from platform_api.access.service import AccessService
-    service = module.admin
-    assert isinstance(service, AccessService)
-    service.ensure_admins(["boss"])
-    assert module.admin.me("boss").roles == ("developer",)
+    assert event.by == "Dana M."  # the admin's display name
+    assert event.reason == "new user"
+    with pytest.raises(UserRejected, match="already exists"):
+        module.admin.add_user("dana", "newdev", "", [])
+    with pytest.raises(UserRejected, match="user name"):
+        module.admin.add_user("dana", "Not A Valid Id", "", [])
+    with pytest.raises(UserRejected, match="unknown role"):
+        module.admin.add_user("dana", "other", "", ["root"])
+    with pytest.raises(NotAllowed):
+        module.admin.add_user("sarinzha", "other", "", [])
 
 
 def test_an_admin_can_take_all_roles_away(access):
     admin = access[0].admin
     assert admin.set_roles("dana", "sarinzha", [], "left the team").roles == ()
-
-
-def test_http_signs_in_new_users(access):
-    module, _ = access
-    app = FastAPI()
-    app.include_router(access_router(module.admin, lambda r: r.headers.get("x-user-id")))
-    c = TestClient(app)
-    assert c.get("/api/me", headers={"X-User-Id": "newdev"}).json()["roles"] == []
-    assert c.get("/api/me", headers={"X-User-Id": "Bad Id"}).status_code == 401
