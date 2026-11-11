@@ -9,8 +9,8 @@ your laptop ──git push──► GitHub ──git pull──► server
                                                  docker compose: postgres, platform-api, web, agent containers
 ```
 
-Sign-in is BSI's own login page: user name + password (scrypt hashes in Postgres) and an HttpOnly, Secure
-session cookie. The first admin is created on first start (`admin` / `admin` unless you set
+Sign-in is BSI's own login page: user name + password (scrypt hashes in Postgres). It returns a JWT
+(signed with `BSI_JWT_SECRET`) that the web app sends as `Authorization: Bearer …`. The first admin is created on first start (`admin` / `admin` unless you set
 `BSI_ADMIN_USERNAME` / `BSI_ADMIN_PASSWORD`) and must pick a new password at the first sign-in. The server's
 nginx only does HTTPS.
 
@@ -56,6 +56,7 @@ PLATFORM_DB_PASSWORD=$(openssl rand -hex 24)
 ANTHROPIC_API_KEY=sk-ant-api03-...
 BSI_ADMIN_USERNAME=admin            # the first admin (default admin)
 BSI_ADMIN_PASSWORD=$(openssl rand -hex 12)   # its first password (default admin); changed at the first sign-in
+BSI_JWT_SECRET=$(openssl rand -hex 32)       # signs sign-in tokens; changing it signs everyone out
 EOF
 sudo chmod 600 .env
 ```
@@ -81,10 +82,10 @@ on the Users page. Forgot a password? An admin clicks "Reset password" for that 
 - **B. On its own host name** (`https://bsi.example.internal/`): a separate `server { }` with its own
   certificate.
 
-Keep it HTTPS: the session cookie is marked Secure, so over plain HTTP the browser never sends it and
-sign-in seems to "not stick". Then `sudo nginx -t && sudo systemctl reload nginx`.
-Moving from the old basic-auth setup: remove the `auth_basic`, `auth_basic_user_file`,
-`X-User-Id` and `Authorization` lines from your nginx site.
+Keep it HTTPS: the sign-in token travels in every request. Then `sudo nginx -t && sudo systemctl reload nginx`.
+Moving from the old basic-auth setup: remove the `auth_basic`, `auth_basic_user_file`, `X-User-Id` lines
+and **`proxy_set_header Authorization ""`**: that last one deletes the sign-in token, so every request after
+signing in would be "not signed in".
 
 **Under a path** (way A): the app must know its path when it is built, because it loads `/bsi/assets/...`
 and calls `/bsi/api/...`. Build with:

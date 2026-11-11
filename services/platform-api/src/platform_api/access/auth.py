@@ -1,6 +1,9 @@
-"""Sign-in: user name + password -> a session token, kept by the browser in an HttpOnly cookie.
+"""Sign-in: user name + password -> a JWT (HS256), sent back as "Authorization: Bearer <token>".
 
-- Passwords: scrypt hashes (passwords.py). Sessions: only the SHA-256 of the token is stored.
+- Token: {sub: user id, jti: random id, iat, exp}, signed with BSI_JWT_SECRET. A token is accepted only if
+  the signature and expiry are right AND its session row still exists: so sign-out, a password change and a
+  reset end it at once, not only when it expires. Only the SHA-256 of each token is stored.
+- Passwords: scrypt hashes (passwords.py).
 - Wrong password: the same answer as for an unknown user, and the same work (a dummy hash), so the
   login form does not tell which user names exist.
 - 5 wrong passwords for a user name within a minute: that name is locked for the rest of the minute.
@@ -11,10 +14,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable
+
+import jwt
 
 from platform_api.access.interfaces import CredentialStore, SessionStore
 from platform_api.access.models import Credential, Permission, Role, SessionRecord
@@ -22,6 +28,9 @@ from platform_api.access.passwords import PasswordRejected, check_new_password, 
 from platform_api.access.schemas import Auth, LoginFailed, NotAllowed, SignedIn, TooManyAttempts, UserView
 from platform_api.access.service import AccessService
 
+log = logging.getLogger("platform_api.access")
+ALGORITHM = "HS256"
+MIN_SECRET_LENGTH = 32
 MAX_FAILURES = 5
 LOCK_SECONDS = 60.0
 
@@ -58,18 +67,32 @@ class _Throttle:
 
 class AuthService(Auth):
     def __init__(self, access: AccessService, credentials: CredentialStore, sessions: SessionStore,
-                 ttl: timedelta = timedelta(hours=12),
+                 secret: str, ttl: timedelta = timedelta(hours=12),
                  now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                  monotonic: Callable[[], float] = time.monotonic) -> None:
+        if len(secret) < MIN_SECRET_LENGTH:
+            raise ValueError(f"the JWT secret needs at least {MIN_SECRET_LENGTH} characters")
         self._access, self._credentials, self._sessions = access, credentials, sessions
+        self._secret = secret
         self._ttl, self._now = ttl, now
         self._throttle = _Throttle(monotonic)
         self._dummy_hash: str | None = None
 
     def _start_session(self, user_id: str) -> str:
-        token = secrets.token_urlsafe(32)
-        self._sessions.add(SessionRecord(_digest(token), user_id, self._now() + self._ttl))
+        now = self._now()
+        expires = now + self._ttl
+        token = jwt.encode({"sub": user_id, "jti": secrets.token_urlsafe(16), "iat": int(now.timestamp()),
+                            "exp": int(expires.timestamp())}, self._secret, algorithm=ALGORITHM)
+        self._sessions.add(SessionRecord(_digest(token), user_id, expires))
         return token
+
+    def _claims(self, token: str) -> dict | None:
+        try:
+            claims = jwt.decode(token, self._secret, algorithms=[ALGORITHM],
+                                options={"require": ["sub", "jti", "exp"], "verify_exp": False})
+        except jwt.PyJWTError:
+            return None
+        return claims if claims["exp"] > self._now().timestamp() else None  # expiry on our clock
 
     def login(self, user_id: str, password: str) -> tuple[str, SignedIn]:
         user_id = user_id.strip().lower()
@@ -80,14 +103,19 @@ class AuthService(Auth):
         ok = verify_password(password, credential.password_hash if credential else self._dummy_hash or "")
         if credential is None or not ok or self._access.name_of(user_id) is None:
             self._throttle.failed(user_id)
+            log.info("sign-in failed for %r", user_id)
             raise LoginFailed("wrong user name or password")
         self._throttle.succeeded(user_id)
+        log.info("signed in: %s%s", user_id, " (must change the password)" if credential.must_change else "")
         self._sessions.delete_expired(self._now())
         return self._start_session(user_id), SignedIn(user_id, credential.must_change)
 
     def session(self, token: str) -> SignedIn | None:
+        claims = self._claims(token)
+        if claims is None:
+            return None  # forged, damaged or expired: no database lookup
         record = self._sessions.get(_digest(token))
-        if record is None:
+        if record is None or record.user_id != claims["sub"]:
             return None
         if record.expires_at <= self._now():
             self._sessions.delete(record.token_hash)
@@ -109,6 +137,7 @@ class AuthService(Auth):
             raise PasswordRejected("pick a password different from the current one")
         self._credentials.save(Credential(user_id, hash_password(new), must_change=False))
         self._sessions.delete_for_user(user_id)
+        log.info("password changed: %s (other sessions signed out)", user_id)
         return self._start_session(user_id)
 
     def create_user(self, actor_id: str, user_id: str, name: str, roles: list[str], password: str) -> UserView:
@@ -117,6 +146,7 @@ class AuthService(Auth):
         check_new_password(password, user_id)
         view = self._access.add_user(actor_id, user_id, name, roles)
         self._credentials.save(Credential(view.id, hash_password(password), must_change=True))
+        log.info("user added: %s by %s", view.id, actor_id)
         return view
 
     def reset_password(self, actor_id: str, user_id: str, password: str) -> None:
@@ -127,6 +157,7 @@ class AuthService(Auth):
         check_new_password(password, user_id)
         self._credentials.save(Credential(user_id, hash_password(password), must_change=True))
         self._sessions.delete_for_user(user_id)
+        log.info("password reset: %s by %s", user_id, actor_id)
 
     def ensure_default_admin(self, user_id: str, password: str) -> bool:
         """First start: user `user_id` with the admin role and this password, to be changed at first sign-in.

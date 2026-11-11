@@ -1,9 +1,9 @@
 """Router: access HTTP API for the web app (FastAPI).
 
-  POST /api/auth/login               {"username", "password"} -> session cookie + who you are
-  POST /api/auth/logout              ends this session
+  POST /api/auth/login               {"username", "password"} -> {"token": JWT, "user"}
+  POST /api/auth/logout              ends this token's session (Authorization: Bearer <token>)
   GET  /api/me                       current user, roles, permissions, must_change_password
-  POST /api/me/password              {"current", "new"}: change your own password (signs out other browsers)
+  POST /api/me/password              {"current", "new"} -> {"token", "user"}: a new token; all old ones end
   GET  /api/users                    all users (any signed-in user)
   POST /api/users                    {"id", "name", "roles", "password"}   admins only; a temporary password
   PUT  /api/users/{id}/roles         {"roles": [...], "reason": "..."}   admins only
@@ -11,7 +11,7 @@
   GET  /api/users/{id}/role-history
   GET  /api/roles                    role -> permissions (the matrix shown in the UI)
 
-Who is calling: `current_user(request)` (passed in; main.py reads the session cookie). It gives no one while
+Who is calling: `current_user(request)` (passed in; main.py reads the Bearer token). It gives no one while
 the user still has to change their password: then only /me, /me/password and logout work. Nothing here
 decides permissions: the services do.
 """
@@ -21,29 +21,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from platform_api.access.passwords import PasswordRejected
 from platform_api.access.schemas import (
-    Auth, LoginFailed, NotAllowed, RoleChange, RoleChangeRejected, TooManyAttempts, UserAdmin, UserNotFound,
-    UserRejected, UserView,
+    Auth, LoginFailed, NotAllowed, RoleChange, RoleChangeRejected, SignedIn, TooManyAttempts, UserAdmin,
+    UserNotFound, UserRejected, UserView,
 )
 
 
-@dataclass(frozen=True)
-class SessionCookie:
-    name: str = "bsi_session"
-    path: str = "/"  # the app's base path, e.g. "/bsi/" behind a shared nginx: not sent to the other apps
-    secure: bool = False  # True behind HTTPS (the browser then never sends it over plain HTTP)
-    max_age_s: int = 12 * 3600
+def bearer_token(request: Request) -> str | None:
+    """The sign-in token from "Authorization: Bearer <jwt>"."""
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    return token.strip() or None if scheme.lower() == "bearer" else None
 
-    def set(self, response: Response, token: str) -> None:
-        response.set_cookie(self.name, token, max_age=self.max_age_s, path=self.path, secure=self.secure,
-                            httponly=True, samesite="strict")
 
-    def clear(self, response: Response) -> None:
-        response.delete_cookie(self.name, path=self.path, secure=self.secure, httponly=True, samesite="strict")
+def signed_in_as(auth: "Auth", request: Request) -> "SignedIn | None":
+    token = bearer_token(request)
+    return auth.session(token) if token else None
 
 
 @dataclass(frozen=True)
@@ -53,6 +49,14 @@ class MeView:
     roles: tuple[str, ...]
     permissions: tuple[str, ...]
     must_change_password: bool
+
+
+@dataclass(frozen=True)
+class TokenView:
+    """The browser keeps `token` and sends it as "Authorization: Bearer <token>"."""
+
+    token: str
+    user: MeView
 
 
 class SetRolesBody(BaseModel):
@@ -81,8 +85,8 @@ class ResetPasswordBody(BaseModel):
     password: str
 
 
-def access_router(admin: UserAdmin, current_user: Callable[[Request], str | None], auth: Auth | None = None,
-                  cookie: SessionCookie = SessionCookie()) -> APIRouter:
+def access_router(admin: UserAdmin, current_user: Callable[[Request], str | None],
+                  auth: Auth | None = None) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["access"])
 
     def signed_in(request: Request) -> str:
@@ -98,11 +102,9 @@ def access_router(admin: UserAdmin, current_user: Callable[[Request], str | None
 
     def caller(request: Request) -> tuple[str, bool]:
         """Like signed_in, but also a user who still has to change their password: (id, must_change)."""
-        token = request.cookies.get(cookie.name)
-        if auth is not None and token:
-            session = auth.session(token)
-            if session is not None:
-                return session.user_id, session.must_change_password
+        session = signed_in_as(auth, request) if auth is not None else None
+        if session is not None:
+            return session.user_id, session.must_change_password
         return signed_in(request), False
 
     def me_view(uid: str, must_change: bool) -> MeView:
@@ -111,31 +113,28 @@ def access_router(admin: UserAdmin, current_user: Callable[[Request], str | None
 
     if auth is not None:
         @router.post("/auth/login")
-        def login(body: LoginBody, response: Response) -> MeView:
+        def login(body: LoginBody) -> TokenView:
             try:
                 token, who = auth.login(body.username, body.password)
             except LoginFailed as e:
                 raise HTTPException(401, str(e)) from None
             except TooManyAttempts as e:
                 raise HTTPException(429, str(e)) from None
-            cookie.set(response, token)
-            return me_view(who.user_id, who.must_change_password)
+            return TokenView(token, me_view(who.user_id, who.must_change_password))
 
         @router.post("/auth/logout", status_code=204)
-        def logout(request: Request, response: Response) -> None:
-            token = request.cookies.get(cookie.name)
+        def logout(request: Request) -> None:
+            token = bearer_token(request)
             if token:
                 auth.logout(token)
-            cookie.clear(response)
 
-        @router.post("/me/password", status_code=204)
-        def change_password(body: ChangePasswordBody, response: Response,
-                            who: tuple[str, bool] = Depends(caller)) -> None:
+        @router.post("/me/password")
+        def change_password(body: ChangePasswordBody, who: tuple[str, bool] = Depends(caller)) -> TokenView:
             try:
                 token = auth.change_password(who[0], body.current, body.new)
             except PasswordRejected as e:
                 raise HTTPException(422, str(e)) from None
-            cookie.set(response, token)
+            return TokenView(token, me_view(who[0], False))  # the old token no longer works
 
         @router.post("/users", status_code=201)
         def add_user(body: NewUserBody, uid: str = Depends(signed_in)) -> UserView:

@@ -13,6 +13,7 @@ dependencies = [
   "docker>=7.1,<8",           # agent containers (Docker API)
   "mcp>=2.3,<3",              # the server tools agents call (MCP server at /mcp/)
   "asyncssh>=2.17,<3",        # runs the tools on servers (the SSH key lives in this process)
+  "pyjwt>=2.10,<3",           # sign-in tokens (HS256)
 ]
 
 [dependency-groups]

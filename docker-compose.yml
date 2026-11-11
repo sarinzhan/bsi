@@ -67,6 +67,7 @@ services:
       # first admin, created on first start; the password must be changed at the first sign-in
       BSI_ADMIN_USERNAME: ${BSI_ADMIN_USERNAME:-admin}
       BSI_ADMIN_PASSWORD: ${BSI_ADMIN_PASSWORD:-admin}
+      BSI_JWT_SECRET: ${BSI_JWT_SECRET:-}       # empty: a random one, everyone is signed out on restart
       BSI_DATABASE_URL: postgresql://platform:dev-platform@postgres:5432/platform
       BSI_SANDBOX: fake           # starts no containers; docker-compose.agents.yml switches to real ones
       BSI_RUN_TTL_S: "600"

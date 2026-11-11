@@ -101,7 +101,7 @@ class Credential:
 
 @dataclass(frozen=True)
 class SessionRecord:
-    """A signed-in browser. Only the SHA-256 of the cookie's token is stored."""
+    """A signed-in browser. Only the SHA-256 of its JWT is stored."""
 
     token_hash: str
     user_id: str

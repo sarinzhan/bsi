@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from mcp.server.transport_security import TransportSecuritySettings
 
 from platform_api.access import create_access_module
-from platform_api.access.router import SessionCookie, access_router
+from platform_api.access.router import access_router, signed_in_as
 from platform_api.agent import create_agent_module
 from platform_api.agent.router import runner_router, runs_router
 from platform_api.agent.integrations.fake_sandbox import FakeSandbox
@@ -75,10 +75,13 @@ def build_app() -> FastAPI:
         log.warning("BSI_ADMIN_PASSWORD is not set: the default admin %r starts with password 'admin' "
                     "(it must be changed at the first sign-in)", admin_name)
     session_hours = int(env("BSI_SESSION_HOURS", "12"))
+    jwt_secret = env("BSI_JWT_SECRET")
+    if not jwt_secret:
+        if mode == "prod":
+            raise RuntimeError("BSI_JWT_SECRET is required (openssl rand -hex 32)")
+        log.warning("BSI_JWT_SECRET is not set: a random one, so everyone is signed out on every restart")
     access = create_access_module(engine, default_admin=(admin_name, admin_password),
-                                  session_ttl=timedelta(hours=session_hours))
-    cookie = SessionCookie(path=env("BSI_BASE_PATH", "/"), secure=env("BSI_COOKIE_SECURE", "false") == "true",
-                           max_age_s=session_hours * 3600)
+                                  session_ttl=timedelta(hours=session_hours), jwt_secret=jwt_secret)
     tool_catalog = ToolCatalog()  # which tools exist: answered by the tools module, created below
     probe: HostProbe
     if real_ssh:
@@ -160,9 +163,8 @@ def build_app() -> FastAPI:
         transport_security=TransportSecuritySettings(allowed_hosts=[h.strip() for h in hosts if h.strip()]))
 
     def current_user(request: Request) -> str | None:
-        """The session cookie's user. No one while they still have to change their password."""
-        token = request.cookies.get(cookie.name)
-        session = access.auth.session(token) if token else None
+        """The Bearer token's user. No one while they still have to change their password."""
+        session = signed_in_as(access.auth, request)
         return session.user_id if session and not session.must_change_password else None
 
     async def reap_forever() -> None:
@@ -192,7 +194,7 @@ def build_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    app.include_router(access_router(access.admin, current_user, access.auth, cookie))
+    app.include_router(access_router(access.admin, current_user, access.auth))
     app.include_router(servers_router(servers.catalog, servers.settings, servers.admin, current_user))
     app.include_router(runs_router(agent.runs, current_user))
     app.include_router(chats_router(chat.chats, current_user))

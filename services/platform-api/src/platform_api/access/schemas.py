@@ -50,7 +50,7 @@ class TooManyAttempts(PermissionError):
 
 @dataclass(frozen=True)
 class SignedIn:
-    """Who a session cookie belongs to. must_change_password: the only thing they may do is change it."""
+    """Who a sign-in token belongs to. must_change_password: the only thing they may do is change it."""
 
     user_id: str
     must_change_password: bool
@@ -85,7 +85,7 @@ class UserAdmin(Protocol):
 
 
 class Auth(Protocol):
-    """Sign-in with a user name and password; the browser keeps a session cookie (the token)."""
+    """Sign-in with a user name and password; the browser keeps the JWT and sends it as a Bearer token."""
 
     def login(self, user_id: str, password: str) -> tuple[str, SignedIn]: ...  # (token, who)
 

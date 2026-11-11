@@ -5,7 +5,7 @@ import type {
 } from './types';
 
 // The real platform-api, same origin: nginx (prod) or the Vite dev server (npm run dev) forwards /api.
-// Who you are: the HttpOnly session cookie set by POST /api/auth/login; the browser sends it by itself.
+// Who you are: the JWT from POST /api/auth/login, kept in localStorage and sent as "Authorization: Bearer".
 
 /** An error answer from platform-api. status 401: not signed in (or the session ended). */
 export class ApiError extends Error {
@@ -14,11 +14,39 @@ export class ApiError extends Error {
   }
 }
 
-/** Fired on any 401 except from login itself: the app shows the sign-in page again. */
+/** Fired on a 401 from any other call (session expired, password reset): the app asks /api/me again. */
 export const SIGNED_OUT_EVENT = 'bsi:signed-out';
+// these show their own error instead (a 401 on the password form must not silently go back to sign-in)
+const NO_SIGNED_OUT_EVENT = new Set(['/api/me', '/api/auth/login', '/api/auth/logout', '/api/me/password']);
+
+const TOKEN_KEY = 'bsi.token';
+
+/** Kept across reloads and tabs. If storage is blocked (private mode), it lasts until the page reloads. */
+let memoryToken: string | null = null;
+
+function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? memoryToken;
+  } catch {
+    return memoryToken;
+  }
+}
+
+function setToken(token: string | null) {
+  memoryToken = token;
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* memory only */
+  }
+}
+
+export const hasToken = () => getToken() !== null;
 
 function headers(extra?: Record<string, string>): Record<string, string> {
-  return { ...extra };
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
 }
 
 /** "/api/..." -> "/bsi/api/..." when the app is served under a base path (BSI_BASE_PATH at build time). */
@@ -39,7 +67,10 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     } catch {
       /* not JSON */
     }
-    if (res.status === 401 && path !== '/api/auth/login') window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+    // Not for login (a wrong password) and not for /api/me itself: the app asks /api/me when this fires,
+    // so firing on its 401 would ask again forever.
+    if (res.status === 401 && path !== '/api/auth/login') setToken(null); // ended or invalid: forget it
+    if (res.status === 401 && !NO_SIGNED_OUT_EVENT.has(path)) window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
     throw new ApiError(res.status, detail);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
@@ -146,9 +177,23 @@ export const httpApi: PlatformApi = {
 
   // ---- access module ----
   getMe: async () => toUser(await call<UserInfo>('GET', '/api/me')),
-  login: async (username, password) => toUser(await call<UserInfo>('POST', '/api/auth/login', { username, password })),
-  logout: () => call<void>('POST', '/api/auth/logout'),
-  changePassword: (current, next) => call<void>('POST', '/api/me/password', { current, new: next }),
+  async login(username, password) {
+    const r = await call<{ token: string; user: UserInfo }>('POST', '/api/auth/login', { username, password });
+    setToken(r.token);
+    return toUser(r.user);
+  },
+  async logout() {
+    try {
+      await call<void>('POST', '/api/auth/logout');
+    } finally {
+      setToken(null);
+    }
+  },
+  async changePassword(current, next) {
+    // the old token ends: keep the new one
+    const r = await call<{ token: string; user: UserInfo }>('POST', '/api/me/password', { current, new: next });
+    setToken(r.token);
+  },
   addUser: async (u) => toUser(await call<UserInfo>('POST', '/api/users', u)),
   resetPassword: (userId, password) => call<void>('PUT', `/api/users/${userId}/password`, { password }),
   listUsers: async () =>

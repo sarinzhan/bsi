@@ -20,7 +20,7 @@ export interface PlatformApi {
   // ---- access ----
   /** Rejects with ApiError status 401 when not signed in. */
   getMe(): Promise<User>;
-  /** Sets the session cookie (HttpOnly: the page never sees the token). */
+  /** Keeps the returned JWT; every later call sends it as "Authorization: Bearer". */
   login(username: string, password: string): Promise<User>;
   logout(): Promise<void>;
   changePassword(current: string, next: string): Promise<void>;

@@ -62,7 +62,7 @@ class CredentialRow(Base):
 class SessionRow(Base):
     __tablename__ = "sessions"
 
-    token_hash: Mapped[str] = mapped_column(Text, primary_key=True)  # SHA-256 of the cookie's token
+    token_hash: Mapped[str] = mapped_column(Text, primary_key=True)  # SHA-256 of the JWT
     user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

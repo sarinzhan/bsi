@@ -47,8 +47,7 @@ uv run alembic check # ORM models and migrations match (needs BSI_DATABASE_URL)
 | `BSI_DATABASE_URL` | Postgres. Required: all data lives there |
 | `BSI_ADMIN_USERNAME`, `BSI_ADMIN_PASSWORD` | the first admin (default `admin` / `admin`), created on first start if it has no password yet; the password must be changed at the first sign-in |
 | `BSI_SESSION_HOURS` | how long a sign-in lasts (default 12) |
-| `BSI_COOKIE_SECURE` | `true` behind HTTPS: the session cookie is only sent over HTTPS (default `false`) |
-| `BSI_BASE_PATH` | the app's path, e.g. `/bsi/`: the session cookie is only sent there (default `/`) |
+| `BSI_JWT_SECRET` | signs the sign-in tokens (JWT, HS256), at least 32 characters. Required in prod; dev without it: a random one (signed out on restart). Changing it signs everyone out |
 | `BSI_SANDBOX` | `docker` (default in prod), `fake` (default in dev: starts nothing) or `process` (dev only: runs agent-runner as a local process, no isolation) |
 | `BSI_RUNNER_COMMAND` | `process` sandbox: command to start agent-runner (default `uv run --project ../agent-runner python -m agent_runner`) |
 | `BSI_LLM`, `BSI_MODEL`, `BSI_EFFORT` | passed to agent containers: `anthropic` or `scripted` (no model), default `claude-opus-5-5`, `high` |

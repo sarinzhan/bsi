@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import { ApiError } from '../api/http';
 import { useCurrentUser } from '../auth';
 
 const MIN_LENGTH = 10;
@@ -38,7 +39,9 @@ export default function ChangePasswordPage({ forced = false }: { forced?: boolea
       await reload();
       if (forced) navigate('/', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof ApiError && err.status === 401
+        ? 'Your sign-in is no longer valid, so the password was NOT changed. Sign out and sign in again.'
+        : err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }

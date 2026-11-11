@@ -37,17 +37,20 @@ def test_database_is_at_the_newest_migration_and_migrating_again_is_a_no_op(pg):
 def test_an_empty_database_gets_the_default_admin_once_and_passwords_and_sessions_are_stored(pg):
     engine, _ = pg
     assert create_access_module(engine).admin.list_users() == []
-    access = create_access_module(engine, default_admin=("boss", "admin"))
+    secret = "s" * 40  # BSI_JWT_SECRET: the same across restarts
+    access = create_access_module(engine, default_admin=("boss", "admin"), jwt_secret=secret)
     assert access.admin.me("boss").roles == ("admin",)
     token, who = access.auth.login("boss", "admin")
     assert who.must_change_password
     token = access.auth.change_password("boss", "admin", "a-long-new-password")
     access.auth.create_user("boss", "newdev", "New Dev", [], "temporary-pass-1")
 
-    fresh = create_access_module(engine, default_admin=("boss", "admin"))  # a restart: nothing reset
+    fresh = create_access_module(engine, default_admin=("boss", "admin"), jwt_secret=secret)  # a restart
     assert {u.id for u in fresh.admin.list_users()} == {"boss", "newdev"}
     assert len(fresh.admin.role_history("boss")) == 1
-    assert fresh.auth.session(token).user_id == "boss"  # the session survives the restart
+    assert fresh.auth.session(token).user_id == "boss"  # the token survives the restart
+    other_secret = create_access_module(engine, jwt_secret="o" * 40)
+    assert other_secret.auth.session(token) is None  # a changed secret ends every token
     assert not fresh.auth.session(token).must_change_password
     _, who = fresh.auth.login("newdev", "temporary-pass-1")
     assert who.must_change_password
