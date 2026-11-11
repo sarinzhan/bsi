@@ -7,7 +7,8 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /**
  * Adding a server, in the order it has to happen:
  * 1. the platform's public key goes into ~/.ssh/authorized_keys on the server,
- * 2. the platform reads the server's SSH host key, the person compares its fingerprint with the server's own,
+ * 2. the platform reads the server's SSH host key, the person compares its fingerprint with the server's own
+ *    (or trusts it without comparing); either way that key is pinned and no other is accepted later,
  * 3. saved (no agent tools yet), then a connection test: Docker version and memory.
  */
 export default function AddServerForm({ onAdded, onCancel }: { onAdded: (s: Server) => void; onCancel: () => void }) {
@@ -20,7 +21,8 @@ export default function AddServerForm({ onAdded, onCancel }: { onAdded: (s: Serv
   const [env, setEnv] = useState<Env>('dev');
   const [systems, setSystems] = useState('');
   const [hostKey, setHostKey] = useState<HostKey | null>(null);
-  const [matches, setMatches] = useState(false);
+  // compared: the person checked the fingerprint on the server. unchecked: trusted as is (trust on first use).
+  const [trust, setTrust] = useState<'compared' | 'unchecked' | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -31,7 +33,7 @@ export default function AddServerForm({ onAdded, onCancel }: { onAdded: (s: Serv
   // Another host or port = another key: fetch and confirm again.
   useEffect(() => {
     setHostKey(null);
-    setMatches(false);
+    setTrust(null);
   }, [host, port]);
 
   const systemList = systems.split(/[\s,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -59,7 +61,7 @@ export default function AddServerForm({ onAdded, onCancel }: { onAdded: (s: Serv
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    if (!hostKey || !matches) return;
+    if (!hostKey || !trust) return;
     setError('');
     setBusy(true);
     try {
@@ -141,16 +143,23 @@ export default function AddServerForm({ onAdded, onCancel }: { onAdded: (s: Serv
             <pre className="mono cmd">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</pre>
             <p className="fingerprint mono">{hostKey.fingerprint} <span className="muted">({hostKey.key.split(' ')[0]})</span></p>
             <label className="role-check">
-              <input type="checkbox" checked={matches} onChange={(e) => setMatches(e.target.checked)} />
-              <span>The fingerprint on the server is the same. From now on the platform trusts only this key.</span>
+              <input type="radio" name="trust" checked={trust === 'compared'} onChange={() => setTrust('compared')} />
+              <span>I compared it: the fingerprint on the server is the same.</span>
             </label>
+            <label className="role-check">
+              <input type="radio" name="trust" checked={trust === 'unchecked'} onChange={() => setTrust('unchecked')} />
+              <span>Trust it without comparing. Only safe if nobody can stand between the platform and this server.</span>
+            </label>
+            {trust && (
+              <p className="muted" style={{ fontSize: 12.5 }}>From now on the platform trusts only this key.</p>
+            )}
           </>
         )}
       </div>
 
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="settings-actions">
-        <button type="submit" className="btn primary" disabled={!hostKey || !matches || !name.trim() || systemList.length === 0 || busy}>
+        <button type="submit" className="btn primary" disabled={!hostKey || !trust || !name.trim() || systemList.length === 0 || busy}>
           {busy && hostKey ? 'Adding…' : 'Add server'}
         </button>
         <button type="button" className="btn" onClick={onCancel}>Cancel</button>
